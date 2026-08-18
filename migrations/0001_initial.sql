@@ -13,7 +13,7 @@ CREATE TABLE places (
   address TEXT,
   lat REAL,
   lng REAL,
-  source TEXT NOT NULL CHECK (source = 'manual'),
+  source TEXT NOT NULL,
   notes TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
