@@ -77,4 +77,43 @@ describe('phase 1 API', () => {
     const places = (await response.json()) as Array<{ name: string }>;
     expect(places.map((place) => place.name)).toEqual(['Ramen House']);
   });
+
+  it('supports distinct any and all tag modes', async () => {
+    const list = await createList('Modes');
+    await addPlace(list.slug, { name: 'Only quick', tags: ['quick'] });
+    await addPlace(list.slug, { name: 'Quick noodles', tags: ['quick', 'noodles'] });
+
+    const anyResponse = await SELF.fetch(`http://example.com/api/lists/${list.slug}/places?tags=quick,noodles&mode=any`);
+    const allResponse = await SELF.fetch(`http://example.com/api/lists/${list.slug}/places?tags=quick,noodles&mode=all`);
+    expect((await anyResponse.json() as Array<{ name: string }>).map((place) => place.name)).toEqual([
+      'Quick noodles',
+      'Only quick',
+    ]);
+    expect((await allResponse.json() as Array<{ name: string }>).map((place) => place.name)).toEqual(['Quick noodles']);
+  });
+
+  it('uses LIKE fallback for a one-character query', async () => {
+    const list = await createList('Short query');
+    await addPlace(list.slug, { name: 'Ramen House' });
+    await addPlace(list.slug, { name: 'Pizza Corner' });
+
+    const response = await SELF.fetch(`http://example.com/api/lists/${list.slug}/places?q=h`);
+    expect((await response.json() as Array<{ name: string }>).map((place) => place.name)).toEqual(['Ramen House']);
+  });
+
+  it('updates the FTS index when a tag is renamed', async () => {
+    const list = await createList('Rename tag');
+    await addPlace(list.slug, { name: 'Noodles', tags: ['old-name'] });
+    const tagsResponse = await SELF.fetch(`http://example.com/api/lists/${list.slug}/tags`);
+    const tag = (await tagsResponse.json() as Array<{ id: string }>)[0];
+
+    const renameResponse = await SELF.fetch(`http://example.com/api/lists/${list.slug}/tags/${tag.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: 'new-name' }),
+    });
+    expect(renameResponse.status).toBe(200);
+    const searchResponse = await SELF.fetch(`http://example.com/api/lists/${list.slug}/places?q=new-name`);
+    expect((await searchResponse.json() as Array<{ name: string }>).map((place) => place.name)).toEqual(['Noodles']);
+  });
 });

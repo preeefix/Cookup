@@ -1,14 +1,3 @@
-import { env } from 'cloudflare:test';
-import migrationSql from '../migrations/0001_initial.sql?raw';
-import { beforeAll } from 'vitest';
+import { applyD1Migrations, env } from 'cloudflare:test';
 
-beforeAll(async () => {
-  const statements = migrationSql
-    .trim()
-    .split(/;\s*(?=CREATE)/)
-    .map((statement) => statement.trim())
-    .filter(Boolean);
-  for (const statement of statements) {
-    await env.DB.prepare(statement).run();
-  }
-});
+await applyD1Migrations(env.DB, env.TEST_MIGRATIONS);

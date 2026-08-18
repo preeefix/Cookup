@@ -1,6 +1,5 @@
 import { Hono } from 'hono';
 import type { Context, Next } from 'hono';
-import { cors } from 'hono/cors';
 
 type Bindings = {
   DB: D1Database;
@@ -46,9 +45,8 @@ type Tag = {
 const app = new Hono<{ Bindings: Bindings; Variables: Variables }>();
 const MAX_PLACES = 500;
 const MAX_NOTES_LENGTH = 2000;
+const LAST_SEEN_REFRESH_MS = 60 * 60 * 1000;
 const BASE58 = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
-
-app.use('/api/*', cors());
 
 function now() {
   return new Date().toISOString();
@@ -90,6 +88,10 @@ function cleanTags(input: unknown): string[] {
 function parseNullableNumber(value: unknown) {
   if (value === null || value === undefined || value === '') return null;
   return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+}
+
+function validCoordinate(value: number | null, minimum: number, maximum: number) {
+  return value === null || (value >= minimum && value <= maximum);
 }
 
 function decodeTags(value: unknown): Tag[] {
@@ -169,9 +171,11 @@ async function resolveList(c: AppContext, next: Next) {
   const slug = c.req.param('slug') ?? '';
   const list = await getList(c.env.DB, slug);
   if (!list) return c.text('Not Found', 404);
-  await c.env.DB.prepare('UPDATE lists SET last_seen_at = ?1 WHERE id = ?2')
-    .bind(now(), list.id)
-    .run();
+  if (Date.parse(list.last_seen_at) < Date.now() - LAST_SEEN_REFRESH_MS) {
+    await c.env.DB.prepare('UPDATE lists SET last_seen_at = ?1 WHERE id = ?2')
+      .bind(now(), list.id)
+      .run();
+  }
   c.set('list', list);
   return next();
 }
@@ -219,7 +223,7 @@ app.post('/api/lists/:slug/rotate', async (c) => {
   for (let attempt = 0; attempt < 3; attempt += 1) {
     const slug = makeSlug();
     try {
-      await c.env.DB.batch([
+      const [result] = await c.env.DB.batch([
         c.env.DB.prepare('UPDATE lists SET slug = ?1, last_seen_at = ?2 WHERE id = ?3 AND slug = ?4').bind(
           slug,
           now(),
@@ -227,6 +231,7 @@ app.post('/api/lists/:slug/rotate', async (c) => {
           list.slug,
         ),
       ]);
+      if (!result.meta.changes) return jsonError(c, 'List URL changed; retry with the current URL', 409);
       return c.json({ slug, url: new URL(`/l/${slug}`, c.req.url).toString() });
     } catch (error) {
       if (attempt === 2 || !String(error).toLowerCase().includes('unique')) throw error;
@@ -251,7 +256,10 @@ app.patch('/api/lists/:slug/tags/:id', async (c) => {
   const list = c.get('list');
   const body = await c.req.json<{ name?: unknown; color?: unknown }>().catch(() => ({}) as { name?: unknown; color?: unknown });
   const name = body.name === undefined ? undefined : typeof body.name === 'string' ? body.name.trim() : '';
-  const color = body.color === null || body.color === undefined ? body.color : typeof body.color === 'string' ? body.color.trim() : '';
+  if (body.color !== undefined && body.color !== null && typeof body.color !== 'string') {
+    return jsonError(c, 'Invalid tag color', 422);
+  }
+  const color = body.color === null || body.color === undefined ? body.color : body.color.trim();
   if (name === '') return jsonError(c, 'Tag name cannot be empty', 422);
   try {
     const fields: string[] = [];
@@ -298,7 +306,7 @@ app.get('/api/lists/:slug/places', async (c) => {
   if (q) {
     const terms = q
       .split(/\s+/)
-      .map((term) => term.replace(/[^a-zA-Z0-9]/g, ''))
+      .flatMap((term) => term.split(/[^a-zA-Z0-9]+/))
       .filter(Boolean);
     if (q.length >= 2 && terms.length) {
       clauses.push(`p.id IN (SELECT place_id FROM places_fts WHERE places_fts MATCH ? AND list_id = ?)`);
@@ -333,7 +341,16 @@ app.post('/api/lists/:slug/places', async (c) => {
   const lng = parseNullableNumber(body.lng);
   const notes = body.notes === null || body.notes === undefined ? null : typeof body.notes === 'string' ? body.notes : undefined;
   if (!name) return jsonError(c, 'Name is required', 422);
-  if (address === undefined || lat === undefined || lng === undefined || notes === undefined) return jsonError(c, 'Invalid place fields', 422);
+  if (
+    address === undefined ||
+    lat === undefined ||
+    lng === undefined ||
+    notes === undefined ||
+    !validCoordinate(lat, -90, 90) ||
+    !validCoordinate(lng, -180, 180)
+  ) {
+    return jsonError(c, 'Invalid place fields', 422);
+  }
   if (notes && notes.length > MAX_NOTES_LENGTH) return jsonError(c, 'Notes are too long', 413);
   const count = await c.env.DB.prepare('SELECT COUNT(*) AS count FROM places WHERE list_id = ?1').bind(list.id).first<{ count: number }>();
   if (Number(count?.count ?? 0) >= MAX_PLACES) return jsonError(c, 'Place limit reached', 413);
@@ -379,7 +396,10 @@ app.patch('/api/lists/:slug/places/:id', async (c) => {
       values.push(body.address);
     } else {
       const number = parseNullableNumber(body[field]);
-      if (number === undefined) return jsonError(c, `Invalid ${field}`, 422);
+      const bounds = field === 'lat' ? [-90, 90] : [-180, 180];
+      if (number === undefined || !validCoordinate(number, bounds[0], bounds[1])) {
+        return jsonError(c, `Invalid ${field}`, 422);
+      }
       fields.push(`${field} = ?`);
       values.push(number);
     }

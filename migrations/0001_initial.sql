@@ -55,7 +55,12 @@ CREATE TRIGGER places_ai AFTER INSERT ON places BEGIN
 END;
 
 CREATE TRIGGER places_au AFTER UPDATE OF name, address, notes ON places BEGIN
-  UPDATE places_fts SET name = new.name, address = new.address, notes = new.notes WHERE place_id = new.id;
+  DELETE FROM places_fts WHERE place_id = new.id;
+  INSERT INTO places_fts(place_id, list_id, name, address, notes, tags)
+  SELECT p.id, p.list_id, p.name, p.address, p.notes, COALESCE(
+    (SELECT group_concat(t.name, ' ') FROM place_tags pt JOIN tags t ON t.id = pt.tag_id WHERE pt.place_id = p.id), ''
+  )
+  FROM places p WHERE p.id = new.id;
 END;
 
 CREATE TRIGGER places_ad AFTER DELETE ON places BEGIN
@@ -63,19 +68,29 @@ CREATE TRIGGER places_ad AFTER DELETE ON places BEGIN
 END;
 
 CREATE TRIGGER place_tags_ai AFTER INSERT ON place_tags BEGIN
-  UPDATE places_fts SET tags = COALESCE(
-    (SELECT group_concat(t.name, ' ') FROM place_tags pt JOIN tags t ON t.id = pt.tag_id WHERE pt.place_id = new.place_id), ''
-  ) WHERE place_id = new.place_id;
+  DELETE FROM places_fts WHERE place_id = new.place_id;
+  INSERT INTO places_fts(place_id, list_id, name, address, notes, tags)
+  SELECT p.id, p.list_id, p.name, p.address, p.notes, COALESCE(
+    (SELECT group_concat(t.name, ' ') FROM place_tags pt JOIN tags t ON t.id = pt.tag_id WHERE pt.place_id = p.id), ''
+  )
+  FROM places p WHERE p.id = new.place_id;
 END;
 
 CREATE TRIGGER place_tags_ad AFTER DELETE ON place_tags BEGIN
-  UPDATE places_fts SET tags = COALESCE(
-    (SELECT group_concat(t.name, ' ') FROM place_tags pt JOIN tags t ON t.id = pt.tag_id WHERE pt.place_id = old.place_id), ''
-  ) WHERE place_id = old.place_id;
+  DELETE FROM places_fts WHERE place_id = old.place_id;
+  INSERT INTO places_fts(place_id, list_id, name, address, notes, tags)
+  SELECT p.id, p.list_id, p.name, p.address, p.notes, COALESCE(
+    (SELECT group_concat(t.name, ' ') FROM place_tags pt JOIN tags t ON t.id = pt.tag_id WHERE pt.place_id = p.id), ''
+  )
+  FROM places p WHERE p.id = old.place_id;
 END;
 
 CREATE TRIGGER tags_au AFTER UPDATE OF name ON tags BEGIN
-  UPDATE places_fts SET tags = COALESCE(
-    (SELECT group_concat(t.name, ' ') FROM place_tags pt JOIN tags t ON t.id = pt.tag_id WHERE pt.place_id = places_fts.place_id), ''
-  ) WHERE place_id IN (SELECT place_id FROM place_tags WHERE tag_id = new.id);
+  DELETE FROM places_fts WHERE place_id IN (SELECT place_id FROM place_tags WHERE tag_id = new.id);
+  INSERT INTO places_fts(place_id, list_id, name, address, notes, tags)
+  SELECT p.id, p.list_id, p.name, p.address, p.notes, COALESCE(
+    (SELECT group_concat(t.name, ' ') FROM place_tags pt JOIN tags t ON t.id = pt.tag_id WHERE pt.place_id = p.id), ''
+  )
+  FROM places p
+  WHERE p.id IN (SELECT place_id FROM place_tags WHERE tag_id = new.id);
 END;

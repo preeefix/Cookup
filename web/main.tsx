@@ -24,9 +24,10 @@ async function api<T>(path: string, options?: RequestInit): Promise<T> {
   return response.status === 204 ? (undefined as T) : response.json();
 }
 
-function rememberSlug(slug: string) {
+function rememberSlug(slug: string, replacedSlug?: string) {
   const slugs = JSON.parse(localStorage.getItem(seenKey) ?? '[]') as string[];
-  if (!slugs.includes(slug)) localStorage.setItem(seenKey, JSON.stringify([slug, ...slugs].slice(0, 20)));
+  const previous = slugs.filter((item) => item !== slug && item !== replacedSlug);
+  localStorage.setItem(seenKey, JSON.stringify([slug, ...previous].slice(0, 20)));
 }
 
 function Landing() {
@@ -127,9 +128,10 @@ function ListPage({ slug }: { slug: string }) {
   const [query, setQuery] = useState('');
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
   const [mode, setMode] = useState<'all' | 'any'>('all');
-  const [form, setForm] = useState({ name: '', address: '', notes: '', tags: [] as string[] });
+  const [form, setForm] = useState({ name: '', address: '', lat: '', lng: '', notes: '', tags: [] as string[] });
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editForm, setEditForm] = useState({ name: '', address: '', notes: '', tags: [] as string[] });
   const [error, setError] = useState('');
-  const [rotated, setRotated] = useState(false);
   const filter = useMemo(
     () => `?q=${encodeURIComponent(query)}&tags=${encodeURIComponent(selectedTags.join(','))}&mode=${mode}`,
     [mode, query, selectedTags],
@@ -151,12 +153,40 @@ function ListPage({ slug }: { slug: string }) {
   async function addPlace(event: FormEvent) {
     event.preventDefault();
     setError('');
+    const lat = form.lat.trim() ? Number(form.lat) : null;
+    const lng = form.lng.trim() ? Number(form.lng) : null;
+    if ((form.lat.trim() && !Number.isFinite(lat)) || (form.lng.trim() && !Number.isFinite(lng))) {
+      setError('Coordinates must be valid numbers');
+      return;
+    }
     try {
-      await api(`/api/lists/${slug}/places`, { method: 'POST', body: JSON.stringify(form) });
-      setForm({ name: '', address: '', notes: '', tags: [] });
+      await api(`/api/lists/${slug}/places`, { method: 'POST', body: JSON.stringify({ ...form, lat, lng }) });
+      setForm({ name: '', address: '', lat: '', lng: '', notes: '', tags: [] });
       await refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not save place');
+    }
+  }
+
+  function beginEdit(place: Place) {
+    setEditingId(place.id);
+    setEditForm({
+      name: place.name,
+      address: place.address ?? '',
+      notes: place.notes ?? '',
+      tags: place.tags.map((tag) => tag.name),
+    });
+  }
+
+  async function editPlace(event: FormEvent, id: string) {
+    event.preventDefault();
+    setError('');
+    try {
+      await api(`/api/lists/${slug}/places/${id}`, { method: 'PATCH', body: JSON.stringify(editForm) });
+      setEditingId(null);
+      await refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not update place');
     }
   }
 
@@ -168,8 +198,7 @@ function ListPage({ slug }: { slug: string }) {
   async function rotate() {
     if (!window.confirm('Rotate this URL? The old URL will stop working immediately.')) return;
     const result = await api<{ slug: string }>(`/api/lists/${slug}/rotate`, { method: 'POST' });
-    rememberSlug(result.slug);
-    setRotated(true);
+    rememberSlug(result.slug, slug);
     window.location.href = `/l/${result.slug}`;
   }
 
@@ -188,7 +217,6 @@ function ListPage({ slug }: { slug: string }) {
           Rotate URL
         </button>
       </header>
-      {rotated && <div className="notice">This URL has rotated. The previous link no longer works.</div>}
       {error && <div className="error notice">{error}</div>}
       <section className="toolbar card">
         <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search names, addresses, notes..." />
@@ -210,6 +238,10 @@ function ListPage({ slug }: { slug: string }) {
           <h2>Add a place</h2>
           <input required value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} placeholder="Place name" />
           <input value={form.address} onChange={(event) => setForm({ ...form, address: event.target.value })} placeholder="Address (optional)" />
+          <div className="coordinate-row">
+            <input type="number" step="any" min="-90" max="90" value={form.lat} onChange={(event) => setForm({ ...form, lat: event.target.value })} placeholder="Latitude (optional)" />
+            <input type="number" step="any" min="-180" max="180" value={form.lng} onChange={(event) => setForm({ ...form, lng: event.target.value })} placeholder="Longitude (optional)" />
+          </div>
           <textarea value={form.notes} onChange={(event) => setForm({ ...form, notes: event.target.value })} placeholder="Notes (optional)" maxLength={2000} />
           <TagInput tags={tags} value={form.tags} setValue={(next) => setForm({ ...form, tags: next })} />
           <button type="submit">Save place</button>
@@ -217,15 +249,33 @@ function ListPage({ slug }: { slug: string }) {
         <section className="places">
           {places.length === 0 ? <div className="empty card">No places match yet. Add your first one.</div> : places.map((place) => (
             <article className="place card" key={place.id}>
-              <div className="place-heading">
-                <div>
-                  <h2>{place.name}</h2>
-                  {place.address && <p className="muted">{place.address}</p>}
-                </div>
-                <button type="button" className="delete-link" onClick={() => removePlace(place.id)}>Delete</button>
-              </div>
-              {place.notes && <p>{place.notes}</p>}
-              <div className="chips">{place.tags.map((tag) => <span className="chip" key={tag.id}>{tag.name}</span>)}</div>
+              {editingId === place.id ? (
+                <form className="edit-form" onSubmit={(event) => editPlace(event, place.id)}>
+                  <input required value={editForm.name} onChange={(event) => setEditForm({ ...editForm, name: event.target.value })} placeholder="Place name" />
+                  <input value={editForm.address} onChange={(event) => setEditForm({ ...editForm, address: event.target.value })} placeholder="Address (optional)" />
+                  <textarea value={editForm.notes} onChange={(event) => setEditForm({ ...editForm, notes: event.target.value })} placeholder="Notes (optional)" maxLength={2000} />
+                  <TagInput tags={tags} value={editForm.tags} setValue={(next) => setEditForm({ ...editForm, tags: next })} />
+                  <div className="edit-actions">
+                    <button type="submit">Save changes</button>
+                    <button type="button" className="delete-link" onClick={() => setEditingId(null)}>Cancel</button>
+                  </div>
+                </form>
+              ) : (
+                <>
+                  <div className="place-heading">
+                    <div>
+                      <h2>{place.name}</h2>
+                      {place.address && <p className="muted">{place.address}</p>}
+                    </div>
+                    <div className="place-actions">
+                      <button type="button" className="delete-link" onClick={() => beginEdit(place)}>Edit</button>
+                      <button type="button" className="delete-link" onClick={() => removePlace(place.id)}>Delete</button>
+                    </div>
+                  </div>
+                  {place.notes && <p>{place.notes}</p>}
+                  <div className="chips">{place.tags.map((tag) => <span className="chip" key={tag.id}>{tag.name}</span>)}</div>
+                </>
+              )}
             </article>
           ))}
         </section>
