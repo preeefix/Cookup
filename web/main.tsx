@@ -1,0 +1,246 @@
+import React, { FormEvent, useEffect, useMemo, useState } from 'react';
+import { createRoot } from 'react-dom/client';
+import './styles.css';
+
+type Tag = { id: string; name: string; color: string | null; usage_count?: number };
+type Place = {
+  id: string;
+  name: string;
+  address: string | null;
+  lat: number | null;
+  lng: number | null;
+  notes: string | null;
+  tags: Tag[];
+};
+
+const seenKey = 'cookup-slugs';
+
+async function api<T>(path: string, options?: RequestInit): Promise<T> {
+  const response = await fetch(path, {
+    headers: { 'Content-Type': 'application/json', ...(options?.headers ?? {}) },
+    ...options,
+  });
+  if (!response.ok) throw new Error((await response.text()) || `Request failed (${response.status})`);
+  return response.status === 204 ? (undefined as T) : response.json();
+}
+
+function rememberSlug(slug: string) {
+  const slugs = JSON.parse(localStorage.getItem(seenKey) ?? '[]') as string[];
+  if (!slugs.includes(slug)) localStorage.setItem(seenKey, JSON.stringify([slug, ...slugs].slice(0, 20)));
+}
+
+function Landing() {
+  const [name, setName] = useState('');
+  const [error, setError] = useState('');
+  const [slugs] = useState<string[]>(() => JSON.parse(localStorage.getItem(seenKey) ?? '[]'));
+
+  async function createList(event: FormEvent) {
+    event.preventDefault();
+    setError('');
+    try {
+      const list = await api<{ slug: string }>('/api/lists', {
+        method: 'POST',
+        body: JSON.stringify({ name }),
+      });
+      rememberSlug(list.slug);
+      window.location.href = `/l/${list.slug}`;
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not create list');
+    }
+  }
+
+  return (
+    <main className="shell landing">
+      <div className="eyebrow">COOKUP</div>
+      <h1>Your places, your way.</h1>
+      <p className="lede">Save restaurants and spots with tags that make sense to you.</p>
+      <form className="card create-card" onSubmit={createList}>
+        <label htmlFor="list-name">Start a new list</label>
+        <div className="inline-form">
+          <input id="list-name" value={name} onChange={(event) => setName(event.target.value)} placeholder="Weekend favourites" />
+          <button type="submit">Create list</button>
+        </div>
+        {error && <p className="error">{error}</p>}
+      </form>
+      {slugs.length > 0 && (
+        <section className="card">
+          <h2>Lists on this device</h2>
+          <div className="saved-links">
+            {slugs.map((slug) => (
+              <a key={slug} href={`/l/${slug}`}>
+                {slug}
+              </a>
+            ))}
+          </div>
+        </section>
+      )}
+      <p className="privacy-note">Your list URL is its key. Anyone with it can edit the list.</p>
+    </main>
+  );
+}
+
+function TagInput({ tags, value, setValue }: { tags: Tag[]; value: string[]; setValue: (tags: string[]) => void }) {
+  const [text, setText] = useState('');
+  const suggestions = tags.filter((tag) => !value.some((item) => item.toLowerCase() === tag.name.toLowerCase()) && tag.name.toLowerCase().includes(text.toLowerCase()));
+  function addTag(raw: string) {
+    const tag = raw.trim();
+    if (tag && !value.some((item) => item.toLowerCase() === tag.toLowerCase())) setValue([...value, tag]);
+    setText('');
+  }
+  return (
+    <div className="tag-input">
+      <div className="chips">
+        {value.map((tag) => (
+          <button type="button" className="chip active" key={tag} onClick={() => setValue(value.filter((item) => item !== tag))}>
+            {tag} ×
+          </button>
+        ))}
+        <input
+          value={text}
+          onChange={(event) => setText(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter' || event.key === ',') {
+              event.preventDefault();
+              addTag(text);
+            }
+          }}
+          onBlur={() => text && addTag(text)}
+          placeholder={value.length ? 'Add another tag' : 'Tags, e.g. ramen'}
+        />
+      </div>
+      {text && suggestions.length > 0 && (
+        <div className="suggestions">
+          {suggestions.map((tag) => (
+            <button type="button" key={tag.id} onMouseDown={() => addTag(tag.name)}>
+              {tag.name}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ListPage({ slug }: { slug: string }) {
+  const [places, setPlaces] = useState<Place[]>([]);
+  const [tags, setTags] = useState<Tag[]>([]);
+  const [query, setQuery] = useState('');
+  const [selectedTags, setSelectedTags] = useState<string[]>([]);
+  const [mode, setMode] = useState<'all' | 'any'>('all');
+  const [form, setForm] = useState({ name: '', address: '', notes: '', tags: [] as string[] });
+  const [error, setError] = useState('');
+  const [rotated, setRotated] = useState(false);
+  const filter = useMemo(
+    () => `?q=${encodeURIComponent(query)}&tags=${encodeURIComponent(selectedTags.join(','))}&mode=${mode}`,
+    [mode, query, selectedTags],
+  );
+
+  async function refresh() {
+    const [nextPlaces, nextTags] = await Promise.all([
+      api<Place[]>(`/api/lists/${slug}/places${filter}`),
+      api<Tag[]>(`/api/lists/${slug}/tags`),
+    ]);
+    setPlaces(nextPlaces);
+    setTags(nextTags);
+  }
+  useEffect(() => {
+    rememberSlug(slug);
+    refresh().catch((err) => setError(err instanceof Error ? err.message : 'Could not load list'));
+  }, [slug, filter]);
+
+  async function addPlace(event: FormEvent) {
+    event.preventDefault();
+    setError('');
+    try {
+      await api(`/api/lists/${slug}/places`, { method: 'POST', body: JSON.stringify(form) });
+      setForm({ name: '', address: '', notes: '', tags: [] });
+      await refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not save place');
+    }
+  }
+
+  async function removePlace(id: string) {
+    await api(`/api/lists/${slug}/places/${id}`, { method: 'DELETE' });
+    await refresh();
+  }
+
+  async function rotate() {
+    if (!window.confirm('Rotate this URL? The old URL will stop working immediately.')) return;
+    const result = await api<{ slug: string }>(`/api/lists/${slug}/rotate`, { method: 'POST' });
+    rememberSlug(result.slug);
+    setRotated(true);
+    window.location.href = `/l/${result.slug}`;
+  }
+
+  function toggleTag(name: string) {
+    setSelectedTags((current) => (current.includes(name) ? current.filter((tag) => tag !== name) : [...current, name]));
+  }
+
+  return (
+    <main className="shell list-shell">
+      <header className="list-header">
+        <div>
+          <div className="eyebrow">COOKUP LIST</div>
+          <h1>Saved places</h1>
+        </div>
+        <button type="button" className="danger-link" onClick={rotate}>
+          Rotate URL
+        </button>
+      </header>
+      {rotated && <div className="notice">This URL has rotated. The previous link no longer works.</div>}
+      {error && <div className="error notice">{error}</div>}
+      <section className="toolbar card">
+        <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search names, addresses, notes..." />
+        <div className="filter-row">
+          {tags.map((tag) => (
+            <button type="button" className={`chip ${selectedTags.includes(tag.name) ? 'active' : ''}`} key={tag.id} onClick={() => toggleTag(tag.name)}>
+              {tag.name} <small>{tag.usage_count}</small>
+            </button>
+          ))}
+          {selectedTags.length > 1 && (
+            <button type="button" className="mode-toggle" onClick={() => setMode(mode === 'all' ? 'any' : 'all')}>
+              Match {mode === 'all' ? 'all' : 'any'}
+            </button>
+          )}
+        </div>
+      </section>
+      <div className="columns">
+        <form className="card add-card" onSubmit={addPlace}>
+          <h2>Add a place</h2>
+          <input required value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} placeholder="Place name" />
+          <input value={form.address} onChange={(event) => setForm({ ...form, address: event.target.value })} placeholder="Address (optional)" />
+          <textarea value={form.notes} onChange={(event) => setForm({ ...form, notes: event.target.value })} placeholder="Notes (optional)" maxLength={2000} />
+          <TagInput tags={tags} value={form.tags} setValue={(next) => setForm({ ...form, tags: next })} />
+          <button type="submit">Save place</button>
+        </form>
+        <section className="places">
+          {places.length === 0 ? <div className="empty card">No places match yet. Add your first one.</div> : places.map((place) => (
+            <article className="place card" key={place.id}>
+              <div className="place-heading">
+                <div>
+                  <h2>{place.name}</h2>
+                  {place.address && <p className="muted">{place.address}</p>}
+                </div>
+                <button type="button" className="delete-link" onClick={() => removePlace(place.id)}>Delete</button>
+              </div>
+              {place.notes && <p>{place.notes}</p>}
+              <div className="chips">{place.tags.map((tag) => <span className="chip" key={tag.id}>{tag.name}</span>)}</div>
+            </article>
+          ))}
+        </section>
+      </div>
+    </main>
+  );
+}
+
+function App() {
+  const match = window.location.pathname.match(/^\/l\/([^/]+)$/);
+  return match ? <ListPage slug={decodeURIComponent(match[1])} /> : <Landing />;
+}
+
+createRoot(document.getElementById('root')!).render(
+  <React.StrictMode>
+    <App />
+  </React.StrictMode>,
+);
