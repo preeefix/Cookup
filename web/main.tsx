@@ -454,7 +454,7 @@ function ListPage({ slug }: { slug: string }) {
           <div className="eyebrow">COOKUP LIST</div>
           <h1>Saved places</h1>
         </div>
-        <button type="button" className="danger-link" onClick={copyList}>
+        <button type="button" className="header-link" onClick={copyList}>
           Copy list
         </button>
       </header>

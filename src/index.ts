@@ -367,10 +367,10 @@ app.post('/api/lists/:slug/copy', async (c) => {
   const [sourceTags, sourcePlaces, sourceLinks] = await Promise.all([
     c.env.DB.prepare('SELECT id, name, color FROM tags WHERE list_id = ?1').bind(sourceList.id).all<Pick<Tag, 'id' | 'name' | 'color'>>(),
     c.env.DB.prepare(
-      'SELECT id, name, address, lat, lng, source, google_place_id, notes FROM places WHERE list_id = ?1 ORDER BY created_at',
+      'SELECT id, name, address, lat, lng, source, google_place_id, notes, created_at, updated_at FROM places WHERE list_id = ?1 ORDER BY created_at',
     )
       .bind(sourceList.id)
-      .all<Pick<Place, 'id' | 'name' | 'address' | 'lat' | 'lng' | 'source' | 'google_place_id' | 'notes'>>(),
+      .all<Pick<Place, 'id' | 'name' | 'address' | 'lat' | 'lng' | 'source' | 'google_place_id' | 'notes' | 'created_at' | 'updated_at'>>(),
     c.env.DB.prepare(
       'SELECT pt.place_id, pt.tag_id FROM place_tags pt JOIN places p ON p.id = pt.place_id WHERE p.list_id = ?1',
     )
@@ -388,7 +388,6 @@ app.post('/api/lists/:slug/copy', async (c) => {
     };
     const tagIds = new Map(sourceTags.results.map((tag) => [tag.id, crypto.randomUUID()]));
     const placeIds = new Map(sourcePlaces.results.map((place) => [place.id, crypto.randomUUID()]));
-    const timestamp = now();
     const statements = [
       c.env.DB.prepare(
         'INSERT INTO lists (id, name, slug, created_at, last_seen_at) VALUES (?1, ?2, ?3, ?4, ?5)',
@@ -414,8 +413,8 @@ app.post('/api/lists/:slug/copy', async (c) => {
           place.source,
           place.google_place_id,
           place.notes,
-          timestamp,
-          timestamp,
+          place.created_at,
+          place.updated_at,
         ),
       ),
       ...sourceLinks.results.flatMap((link) => {

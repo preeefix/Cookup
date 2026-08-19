@@ -76,6 +76,7 @@ describe('phase 1 API', () => {
       tags: ['ramen', 'tokyo'],
     });
     await addPlace(source.slug, { name: 'Copy Cafe', tags: ['cafe'] });
+    await addPlace(source.slug, { name: 'Copy Park', tags: ['outdoors'] });
     const sourceTagsResponse = await SELF.fetch(`http://example.com/api/lists/${source.slug}/tags`);
     const sourceTags = (await sourceTagsResponse.json()) as Array<{ id: string; name: string; color: string | null }>;
     const colorResponse = await SELF.fetch(`http://example.com/api/lists/${source.slug}/tags/${sourceTags[0].id}`, {
@@ -120,7 +121,7 @@ describe('phase 1 API', () => {
       tags: Array<{ id: string; name: string }>;
     }>;
     expect(copiedPlaces).toHaveLength(sourcePlaces.length);
-    expect(copiedPlaces.map((place) => place.name).sort()).toEqual(sourcePlaces.map((place) => place.name).sort());
+    expect(copiedPlaces.map((place) => place.name)).toEqual(sourcePlaces.map((place) => place.name));
     for (const sourcePlace of sourcePlaces) {
       const copiedPlace = copiedPlaces.find((place) => place.name === sourcePlace.name);
       expect(copiedPlace).toBeDefined();
@@ -149,7 +150,7 @@ describe('phase 1 API', () => {
     const deleteResponse = await SELF.fetch(`http://example.com/api/lists/${copy.slug}/places/${copiedPlaces[0].id}`, { method: 'DELETE' });
     expect(deleteResponse.status).toBe(204);
     const sourceAfterDelete = await SELF.fetch(`http://example.com/api/lists/${source.slug}/places`);
-    expect((await sourceAfterDelete.json() as Array<{ name: string }>).map((place) => place.name)).toEqual(['Copy Cafe', 'Copy Ramen']);
+    expect((await sourceAfterDelete.json() as Array<{ name: string }>).map((place) => place.name)).toEqual(['Copy Park', 'Copy Cafe', 'Copy Ramen']);
   });
 
   it('copies an empty list and removes the rotate route', async () => {
