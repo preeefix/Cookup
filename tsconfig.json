@@ -8,7 +8,7 @@
     "skipLibCheck": true,
     "noEmit": true,
     "jsx": "react-jsx",
-    "types": ["@cloudflare/workers-types", "vitest/globals"]
+    "types": ["@cloudflare/workers-types", "vitest/globals", "vite/client"]
   },
   "include": ["src", "web", "vite.config.ts", "vitest.config.ts"]
 }

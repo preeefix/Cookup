@@ -2,6 +2,9 @@ import React, { FormEvent, useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
+import markerIcon from 'leaflet/dist/images/marker-icon.png';
+import markerIcon2x from 'leaflet/dist/images/marker-icon-2x.png';
+import markerShadow from 'leaflet/dist/images/marker-shadow.png';
 import './styles.css';
 
 type Tag = { id: string; name: string; color: string | null; usage_count?: number };
@@ -17,6 +20,16 @@ type Place = {
 
 const DEFAULT_MAP_CENTER: L.LatLngExpression = [20, 0];
 const DEFAULT_MAP_ZOOM = 2;
+
+L.Marker.prototype.options.icon = L.icon({
+  iconUrl: markerIcon,
+  iconRetinaUrl: markerIcon2x,
+  shadowUrl: markerShadow,
+  iconSize: [25, 41],
+  iconAnchor: [12, 41],
+  popupAnchor: [1, -34],
+  shadowSize: [41, 41],
+});
 
 const seenKey = 'cookup-slugs';
 
@@ -137,7 +150,16 @@ function hasCoordinates(place: Place): place is Place & { lat: number; lng: numb
 
 function popupContent(place: Place): HTMLElement {
   const content = document.createElement('div');
-  content.textContent = [place.name, place.address, place.tags.map((tag) => tag.name).join(', ')].filter(Boolean).join('\n');
+  content.className = 'map-popup';
+  const heading = document.createElement('strong');
+  heading.textContent = place.name;
+  content.appendChild(heading);
+  for (const line of [place.address, place.tags.map((tag) => tag.name).join(', ')]) {
+    if (!line) continue;
+    const paragraph = document.createElement('p');
+    paragraph.textContent = line;
+    content.appendChild(paragraph);
+  }
   return content;
 }
 

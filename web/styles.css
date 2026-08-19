@@ -48,7 +48,7 @@ button[type=submit] { border: 0; border-radius: 10px; padding: 12px 18px; backgr
 .map-summary { color: #81796d; margin: 0 0 12px; font-size: 14px; }
 .map-wrap { position: relative; overflow: hidden; border-radius: 12px; }
 .map-canvas { min-height: 420px; height: min(65vh, 620px); background: #eee7dc; }
-.map-empty-overlay { position: absolute; inset: 16px; display: grid; place-items: center; padding: 24px; border: 1px solid #d9d0c3; border-radius: 10px; background: #fffdf9e8; color: #6d665b; text-align: center; pointer-events: none; }
+.map-empty-overlay { position: absolute; z-index: 500; inset: 16px; display: grid; place-items: center; padding: 24px; border: 1px solid #d9d0c3; border-radius: 10px; background: #fffdf9e8; color: #6d665b; text-align: center; pointer-events: none; }
 .map-empty { padding: 80px 24px; }
 .place-heading { display: flex; justify-content: space-between; gap: 10px; }
 .place-actions, .edit-actions { display: flex; align-items: center; gap: 12px; }
@@ -70,3 +70,6 @@ button[type=submit] { border: 0; border-radius: 10px; padding: 12px 18px; backgr
   .inline-form { flex-direction: column; }
   .list-header h1 { font-size: 40px; }
 }
+
+.map-popup strong { display: block; margin-bottom: 4px; }
+.map-popup p { margin: 0 0 2px; color: #6d665b; }
