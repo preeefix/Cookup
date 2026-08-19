@@ -182,6 +182,8 @@ function MapView({ places }: { places: Place[] }) {
     mapRef.current = map;
     markersRef.current = markers;
 
+    viewSignatureRef.current = null;
+
     const frame = window.requestAnimationFrame(() => map.invalidateSize());
     return () => {
       window.cancelAnimationFrame(frame);
@@ -189,6 +191,7 @@ function MapView({ places }: { places: Place[] }) {
       map.remove();
       mapRef.current = null;
       markersRef.current = null;
+      viewSignatureRef.current = null;
     };
   }, []);
 
