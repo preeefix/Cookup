@@ -167,6 +167,7 @@ function MapView({ places }: { places: Place[] }) {
   const mapNode = useRef<HTMLDivElement>(null);
   const mapRef = useRef<L.Map | null>(null);
   const markersRef = useRef<L.LayerGroup | null>(null);
+  const viewSignatureRef = useRef<string | null>(null);
   const mappedPlaces = useMemo(() => places.filter(hasCoordinates), [places]);
 
   useEffect(() => {
@@ -201,6 +202,12 @@ function MapView({ places }: { places: Place[] }) {
       L.marker([place.lat, place.lng]).bindPopup(popupContent(place)).addTo(markers);
     });
 
+    map.invalidateSize();
+
+    const signature = mappedPlaces.map((place) => `${place.id}:${place.lat}:${place.lng}`).join('|');
+    if (signature === viewSignatureRef.current) return;
+    viewSignatureRef.current = signature;
+
     if (mappedPlaces.length === 0) {
       map.setView(DEFAULT_MAP_CENTER, DEFAULT_MAP_ZOOM);
     } else if (mappedPlaces.length === 1) {
@@ -211,7 +218,6 @@ function MapView({ places }: { places: Place[] }) {
         maxZoom: 15,
       });
     }
-    map.invalidateSize();
   }, [mappedPlaces]);
 
   return (
