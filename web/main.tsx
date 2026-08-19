@@ -261,10 +261,10 @@ function ListPage({ slug }: { slug: string }) {
     source: 'manual' as 'manual' | 'google' | 'link',
     google_place_id: '',
   });
+  const [addOpen, setAddOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editForm, setEditForm] = useState({ name: '', address: '', notes: '', tags: [] as string[] });
   const [error, setError] = useState('');
-  const [view, setView] = useState<'list' | 'map'>('list');
   const [debouncedQuery, setDebouncedQuery] = useState('');
   const [googleQuery, setGoogleQuery] = useState('');
   const [googleCandidates, setGoogleCandidates] = useState<GoogleCandidate[]>([]);
@@ -347,22 +347,24 @@ function ListPage({ slug }: { slug: string }) {
         method: 'POST',
         body: JSON.stringify({ ...form, lat, lng, google_place_id: form.google_place_id || null }),
       });
-      setForm({
-        name: '',
-        address: '',
-        lat: '',
-        lng: '',
-        notes: '',
-        tags: [],
-        source: 'manual',
-        google_place_id: '',
-      });
-      setGoogleCandidates([]);
-      setLinkCandidate(null);
+      closeAdd();
       await refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not save place');
     }
+  }
+
+  function resetAddTools() {
+    setGoogleQuery('');
+    setGoogleCandidates([]);
+    setLinkUrl('');
+    setLinkCandidate(null);
+  }
+
+  function closeAdd() {
+    setForm({ name: '', address: '', lat: '', lng: '', notes: '', tags: [], source: 'manual', google_place_id: '' });
+    resetAddTools();
+    setAddOpen(false);
   }
 
   function useGoogleCandidate(candidate: GoogleCandidate, source: 'google' | 'link') {
@@ -443,6 +445,8 @@ function ListPage({ slug }: { slug: string }) {
     }
   }
 
+  const mappedCount = places.filter(hasCoordinates).length;
+
   function toggleTag(name: string) {
     setSelectedTags((current) => (current.includes(name) ? current.filter((tag) => tag !== name) : [...current, name]));
   }
@@ -459,144 +463,143 @@ function ListPage({ slug }: { slug: string }) {
         </button>
       </header>
       {error && <div className="error notice">{error}</div>}
-      <section className="toolbar card">
-        <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search names, addresses, notes..." />
-        <div className="filter-row">
-          {tags.map((tag) => (
-            <button type="button" className={`chip ${selectedTags.includes(tag.name) ? 'active' : ''}`} key={tag.id} onClick={() => toggleTag(tag.name)}>
-              {tag.name} <small>{tag.usage_count}</small>
-            </button>
-          ))}
-          {selectedTags.length > 1 && (
-            <button type="button" className="mode-toggle" onClick={() => setMode(mode === 'all' ? 'any' : 'all')}>
-              Match {mode === 'all' ? 'all' : 'any'}
-            </button>
-          )}
-        </div>
-        <div className="view-toggle" role="group" aria-label="Place view">
-          <button type="button" className={view === 'list' ? 'active' : ''} aria-pressed={view === 'list'} onClick={() => setView('list')}>
-            List
-          </button>
-          <button type="button" className={view === 'map' ? 'active' : ''} aria-pressed={view === 'map'} onClick={() => setView('map')}>
-            Map
-          </button>
-        </div>
-      </section>
-      <div className="columns">
-        <form className="card add-card" onSubmit={addPlace}>
-          <h2>Add a place</h2>
-          <div className="google-tools">
-            <label htmlFor="google-place-search">Find a place on Google</label>
-            <input
-              id="google-place-search"
-              value={googleQuery}
-              onChange={(event) => {
-                setGoogleQuery(event.target.value);
-                setError('');
-              }}
-              onKeyDown={(event) => {
-                if (event.key === 'Enter') event.preventDefault();
-              }}
-              placeholder="Search restaurants or places"
-            />
-            {googleSearching && <p className="muted">Searching Google Places…</p>}
-            {googleCandidates.length > 0 && (
-              <div className="candidate-results">
-                {googleCandidates.map((candidate) => (
-                  <button type="button" className="candidate" key={candidate.google_place_id} onClick={() => useGoogleCandidate(candidate, 'google')}>
-                    <strong>{candidate.name}</strong>
-                    {candidate.address && <span>{candidate.address}</span>}
-                  </button>
-                ))}
-              </div>
-            )}
-            <label htmlFor="google-maps-link">Paste a Google Maps link</label>
-            <div className="link-input">
+      <div className="workspace">
+        <div className="results-pane">
+          <section className="toolbar card">
+            <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search names, addresses, notes..." />
+            <div className="filter-row">
+              {tags.map((tag) => (
+                <button type="button" className={`chip ${selectedTags.includes(tag.name) ? 'active' : ''}`} key={tag.id} onClick={() => toggleTag(tag.name)}>
+                  {tag.name} <small>{tag.usage_count}</small>
+                </button>
+              ))}
+              {selectedTags.length > 1 && (
+                <button type="button" className="mode-toggle" onClick={() => setMode(mode === 'all' ? 'any' : 'all')}>
+                  Match {mode === 'all' ? 'all' : 'any'}
+                </button>
+              )}
+            </div>
+          </section>
+          {addOpen ? (
+          <form className="card add-card" onSubmit={addPlace}>
+            <div className="add-header">
+              <h2>Add a place</h2>
+              <button type="button" className="delete-link" onClick={closeAdd}>
+                Cancel
+              </button>
+            </div>
+            <div className="google-tools">
+              <label htmlFor="google-place-search">Find a place on Google</label>
               <input
-                id="google-maps-link"
-                value={linkUrl}
+                id="google-place-search"
+                autoFocus
+                value={googleQuery}
                 onChange={(event) => {
-                  setLinkUrl(event.target.value);
+                  setGoogleQuery(event.target.value);
                   setError('');
                 }}
                 onKeyDown={(event) => {
                   if (event.key === 'Enter') event.preventDefault();
                 }}
-                placeholder="https://maps.app.goo.gl/..."
+                placeholder="Search restaurants or places"
               />
-              <button type="button" className="secondary-button" onClick={resolveLink} disabled={linkResolving}>
-                {linkResolving ? 'Resolving…' : 'Resolve'}
-              </button>
+              {googleSearching && <p className="muted">Searching Google Places…</p>}
+              {googleCandidates.length > 0 && (
+                <div className="candidate-results">
+                  {googleCandidates.map((candidate) => (
+                    <button type="button" className="candidate" key={candidate.google_place_id} onClick={() => useGoogleCandidate(candidate, 'google')}>
+                      <strong>{candidate.name}</strong>
+                      {candidate.address && <span>{candidate.address}</span>}
+                    </button>
+                  ))}
+                </div>
+              )}
+              <label htmlFor="google-maps-link">Paste a Google Maps link</label>
+              <div className="link-input">
+                <input
+                  id="google-maps-link"
+                  value={linkUrl}
+                  onChange={(event) => {
+                    setLinkUrl(event.target.value);
+                    setError('');
+                  }}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter') event.preventDefault();
+                  }}
+                  placeholder="https://maps.app.goo.gl/..."
+                />
+                <button type="button" className="secondary-button" onClick={resolveLink} disabled={linkResolving}>
+                  {linkResolving ? 'Resolving…' : 'Resolve'}
+                </button>
+              </div>
+              {linkCandidate && (
+                <button type="button" className="candidate selected-candidate" onClick={() => useGoogleCandidate(linkCandidate, 'link')}>
+                  <strong>{linkCandidate.name}</strong>
+                  {linkCandidate.address && <span>{linkCandidate.address}</span>}
+                  <small>Use this place</small>
+                </button>
+              )}
             </div>
-            {linkCandidate && (
-              <button type="button" className="candidate selected-candidate" onClick={() => useGoogleCandidate(linkCandidate, 'link')}>
-                <strong>{linkCandidate.name}</strong>
-                {linkCandidate.address && <span>{linkCandidate.address}</span>}
-                <small>Use this place</small>
-              </button>
-            )}
-          </div>
-          <input required value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} placeholder="Place name" />
-          <input value={form.address} onChange={(event) => setForm({ ...form, address: event.target.value })} placeholder="Address (optional)" />
-          <div className="coordinate-row">
-            <input type="number" step="any" min="-90" max="90" value={form.lat} onChange={(event) => setForm({ ...form, lat: event.target.value })} placeholder="Latitude (optional)" />
-            <input type="number" step="any" min="-180" max="180" value={form.lng} onChange={(event) => setForm({ ...form, lng: event.target.value })} placeholder="Longitude (optional)" />
-          </div>
-          <textarea value={form.notes} onChange={(event) => setForm({ ...form, notes: event.target.value })} placeholder="Notes (optional)" maxLength={2000} />
-          <TagInput tags={tags} value={form.tags} setValue={(next) => setForm({ ...form, tags: next })} />
-          <button type="submit">Save place</button>
-        </form>
-        {view === 'map' ? (
-          <section className="map-panel card">
-            {places.length === 0 ? (
-              <div className="empty map-empty">No places match the current filters, so there is nothing to map.</div>
-            ) : (
-              <>
-                <p className="map-summary">
-                  Showing {places.filter(hasCoordinates).length} of {places.length} matching {places.length === 1 ? 'place' : 'places'} on the map.
-                  {places.filter((place) => !hasCoordinates(place)).length > 0 && (
-                    <> {places.filter((place) => !hasCoordinates(place)).length} {places.filter((place) => !hasCoordinates(place)).length === 1 ? 'place has' : 'places have'} no coordinates.</>
-                  )}
-                </p>
-                <MapView places={places} />
-              </>
-            )}
-          </section>
-        ) : (
+            <input required value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} placeholder="Place name" />
+            <input value={form.address} onChange={(event) => setForm({ ...form, address: event.target.value })} placeholder="Address (optional)" />
+            <div className="coordinate-row">
+              <input type="number" step="any" min="-90" max="90" value={form.lat} onChange={(event) => setForm({ ...form, lat: event.target.value })} placeholder="Latitude (optional)" />
+              <input type="number" step="any" min="-180" max="180" value={form.lng} onChange={(event) => setForm({ ...form, lng: event.target.value })} placeholder="Longitude (optional)" />
+            </div>
+            <textarea value={form.notes} onChange={(event) => setForm({ ...form, notes: event.target.value })} placeholder="Notes (optional)" maxLength={2000} />
+            <TagInput tags={tags} value={form.tags} setValue={(next) => setForm({ ...form, tags: next })} />
+            <button type="submit">Save place</button>
+          </form>
+          ) : (
+            <button type="button" className="card add-trigger" onClick={() => setAddOpen(true)}>
+              + Add a place
+            </button>
+          )}
           <section className="places">
-            {places.length === 0 ? <div className="empty card">No places match yet. Add your first one.</div> : places.map((place) => (
-              <article className="place card" key={place.id}>
-                {editingId === place.id ? (
-                  <form className="edit-form" onSubmit={(event) => editPlace(event, place.id)}>
-                    <input required value={editForm.name} onChange={(event) => setEditForm({ ...editForm, name: event.target.value })} placeholder="Place name" />
-                    <input value={editForm.address} onChange={(event) => setEditForm({ ...editForm, address: event.target.value })} placeholder="Address (optional)" />
-                    <textarea value={editForm.notes} onChange={(event) => setEditForm({ ...editForm, notes: event.target.value })} placeholder="Notes (optional)" maxLength={2000} />
-                    <TagInput tags={tags} value={editForm.tags} setValue={(next) => setEditForm({ ...editForm, tags: next })} />
-                    <div className="edit-actions">
-                      <button type="submit">Save changes</button>
-                      <button type="button" className="delete-link" onClick={() => setEditingId(null)}>Cancel</button>
-                    </div>
-                  </form>
-                ) : (
-                  <>
-                    <div className="place-heading">
-                      <div>
-                        <h2>{place.name}</h2>
-                        {place.address && <p className="muted">{place.address}</p>}
+              {places.length === 0 ? <div className="empty card">No places match yet. Add your first one.</div> : places.map((place) => (
+                <article className="place card" key={place.id}>
+                  {editingId === place.id ? (
+                    <form className="edit-form" onSubmit={(event) => editPlace(event, place.id)}>
+                      <input required value={editForm.name} onChange={(event) => setEditForm({ ...editForm, name: event.target.value })} placeholder="Place name" />
+                      <input value={editForm.address} onChange={(event) => setEditForm({ ...editForm, address: event.target.value })} placeholder="Address (optional)" />
+                      <textarea value={editForm.notes} onChange={(event) => setEditForm({ ...editForm, notes: event.target.value })} placeholder="Notes (optional)" maxLength={2000} />
+                      <TagInput tags={tags} value={editForm.tags} setValue={(next) => setEditForm({ ...editForm, tags: next })} />
+                      <div className="edit-actions">
+                        <button type="submit">Save changes</button>
+                        <button type="button" className="delete-link" onClick={() => setEditingId(null)}>Cancel</button>
                       </div>
-                      <div className="place-actions">
-                        <button type="button" className="delete-link" onClick={() => beginEdit(place)}>Edit</button>
-                        <button type="button" className="delete-link" onClick={() => removePlace(place.id)}>Delete</button>
+                    </form>
+                  ) : (
+                    <>
+                      <div className="place-heading">
+                        <div>
+                          <h2>{place.name}</h2>
+                          {place.address && <p className="muted">{place.address}</p>}
+                        </div>
+                        <div className="place-actions">
+                          <button type="button" className="delete-link" onClick={() => beginEdit(place)}>Edit</button>
+                          <button type="button" className="delete-link" onClick={() => removePlace(place.id)}>Delete</button>
+                        </div>
                       </div>
-                    </div>
-                    {place.notes && <p>{place.notes}</p>}
-                    <div className="chips">{place.tags.map((tag) => <span className="chip" key={tag.id}>{tag.name}</span>)}</div>
-                  </>
-                )}
-              </article>
-            ))}
+                      {place.notes && <p>{place.notes}</p>}
+                      <div className="chips">{place.tags.map((tag) => <span className="chip" key={tag.id}>{tag.name}</span>)}</div>
+                    </>
+                  )}
+                </article>
+              ))}
           </section>
-        )}
+        </div>
+        <aside className="map-panel card">
+          {places.length > 0 && (
+            <p className="map-summary">
+              Showing {mappedCount} of {places.length} matching {places.length === 1 ? 'place' : 'places'} on the map.
+              {places.length - mappedCount > 0 && (
+                <> {places.length - mappedCount} {places.length - mappedCount === 1 ? 'place has' : 'places have'} no coordinates.</>
+              )}
+            </p>
+          )}
+          <MapView places={places} />
+        </aside>
       </div>
     </main>
   );

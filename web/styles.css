@@ -10,6 +10,7 @@ body { margin: 0; }
 button, input, textarea { font: inherit; }
 button { cursor: pointer; }
 .shell { max-width: 1100px; margin: 0 auto; padding: 56px 24px; }
+.list-shell { max-width: 1340px; }
 .landing { max-width: 720px; min-height: 100vh; display: flex; flex-direction: column; justify-content: center; }
 .eyebrow { color: #a45432; font-size: 12px; font-weight: 800; letter-spacing: .16em; }
 h1 { font-size: clamp(40px, 7vw, 72px); line-height: .98; margin: 14px 0; letter-spacing: -.05em; }
@@ -31,18 +32,20 @@ button[type=submit] { border: 0; border-radius: 10px; padding: 12px 18px; backgr
 .list-header h1 { font-size: 48px; }
 .header-link, .delete-link { border: 0; color: #a45432; background: transparent; font-weight: 700; }
 .notice { padding: 13px 16px; border-radius: 10px; background: #fff1db; margin-bottom: 18px; }
-.toolbar { margin-bottom: 22px; }
+.toolbar { margin-bottom: 18px; }
 .filter-row, .chips { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .filter-row { margin-top: 14px; }
-.view-toggle { display: inline-flex; margin-top: 16px; border: 1px solid #d9d0c3; border-radius: 999px; padding: 3px; background: #f5f1e9; }
-.view-toggle button { border: 0; border-radius: 999px; padding: 7px 14px; color: #5d564c; background: transparent; }
-.view-toggle button.active { color: #fff; background: #a45432; }
 .chip { border: 1px solid #d9d0c3; border-radius: 999px; padding: 7px 11px; background: #fff; color: #5d564c; }
 .chip.active { color: #fff; border-color: #a45432; background: #a45432; }
 .chip small { opacity: .7; }
 .mode-toggle { border: 0; background: #eee7dc; border-radius: 999px; padding: 8px 12px; color: #5d564c; }
-.columns { display: grid; grid-template-columns: 310px 1fr; gap: 22px; align-items: start; }
-.add-card { display: grid; gap: 12px; position: sticky; top: 20px; }
+.workspace { display: grid; grid-template-columns: minmax(340px, 420px) 1fr; gap: 22px; align-items: start; }
+.results-pane { display: grid; gap: 18px; align-content: start; }
+.add-card { display: grid; gap: 12px; }
+.add-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.add-header h2 { margin: 0; }
+.add-trigger { padding: 16px; color: #a45432; font-weight: 700; text-align: center; }
+.add-trigger:hover { border-color: #a45432; background: #fffaf3; }
 .google-tools { display: grid; gap: 8px; padding-bottom: 4px; border-bottom: 1px solid #e5ded3; }
 .google-tools label { margin: 4px 0 0; font-size: 13px; }
 .google-tools .muted { margin: 0; }
@@ -56,12 +59,11 @@ button[type=submit] { border: 0; border-radius: 10px; padding: 12px 18px; backgr
 .secondary-button { border: 1px solid #d9d0c3; border-radius: 10px; padding: 10px 12px; background: #eee7dc; color: #5d564c; font-weight: 700; white-space: nowrap; }
 .secondary-button:disabled { cursor: wait; opacity: .65; }
 .places { display: grid; gap: 14px; }
-.map-panel { padding: 16px; }
+.map-panel { display: flex; flex-direction: column; padding: 16px; position: sticky; top: 20px; height: calc(100vh - 76px); min-height: 460px; }
 .map-summary { color: #81796d; margin: 0 0 12px; font-size: 14px; }
-.map-wrap { position: relative; overflow: hidden; border-radius: 12px; }
-.map-canvas { min-height: 420px; height: min(65vh, 620px); background: #eee7dc; }
+.map-wrap { position: relative; flex: 1; overflow: hidden; border-radius: 12px; }
+.map-canvas { height: 100%; background: #eee7dc; }
 .map-empty-overlay { position: absolute; z-index: 500; inset: 16px; display: grid; place-items: center; padding: 24px; border: 1px solid #d9d0c3; border-radius: 10px; background: #fffdf9e8; color: #6d665b; text-align: center; pointer-events: none; }
-.map-empty { padding: 80px 24px; }
 .place-heading { display: flex; justify-content: space-between; gap: 10px; }
 .place-actions, .edit-actions { display: flex; align-items: center; gap: 12px; }
 .edit-form { display: grid; gap: 12px; }
@@ -75,9 +77,11 @@ button[type=submit] { border: 0; border-radius: 10px; padding: 12px 18px; backgr
 .suggestions button:hover { background: #f5f1e9; }
 .error { color: #a13f33; }
 .empty { color: #81796d; text-align: center; }
+@media (max-width: 900px) {
+  .workspace { grid-template-columns: 1fr; }
+  .map-panel { position: static; height: 60vh; }
+}
 @media (max-width: 700px) {
-  .columns { grid-template-columns: 1fr; }
-  .add-card { position: static; }
   .coordinate-row { grid-template-columns: 1fr; }
   .inline-form { flex-direction: column; }
   .list-header h1 { font-size: 40px; }
