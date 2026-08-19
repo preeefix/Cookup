@@ -19,3 +19,18 @@ pnpm dev
 
 See the project scripts and `wrangler.toml` for local D1 and deployment
 commands.
+
+## Google Places configuration
+
+Google Places search and Google Maps link resolution use the
+`GOOGLE_PLACES_API_KEY` Worker secret. For production, configure it with:
+
+```sh
+wrangler secret put GOOGLE_PLACES_API_KEY
+```
+
+For local development, put the key in a gitignored `.dev.vars` file:
+
+```text
+GOOGLE_PLACES_API_KEY=your-key-here
+```

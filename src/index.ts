@@ -4,6 +4,7 @@ import type { Context, Next } from 'hono';
 type Bindings = {
   DB: D1Database;
   ASSETS: Fetcher;
+  GOOGLE_PLACES_API_KEY?: string;
 };
 
 type List = {
@@ -27,7 +28,8 @@ type Place = {
   address: string | null;
   lat: number | null;
   lng: number | null;
-  source: 'manual';
+  source: 'manual' | 'google' | 'link';
+  google_place_id: string | null;
   notes: string | null;
   created_at: string;
   updated_at: string;
@@ -42,6 +44,14 @@ type Tag = {
   usage_count?: number;
 };
 
+type GoogleCandidate = {
+  google_place_id: string | null;
+  name: string;
+  address: string | null;
+  lat: number | null;
+  lng: number | null;
+};
+
 const app = new Hono<{ Bindings: Bindings; Variables: Variables }>();
 const MAX_PLACES = 500;
 const MAX_NOTES_LENGTH = 2000;
@@ -53,7 +63,7 @@ function now() {
   return new Date().toISOString();
 }
 
-function jsonError(c: AppContext, message: string, status: 400 | 404 | 409 | 413 | 422) {
+function jsonError(c: AppContext, message: string, status: 400 | 404 | 409 | 413 | 422 | 502 | 503) {
   return c.json({ error: message }, status);
 }
 
@@ -106,6 +116,131 @@ function decodeTags(value: unknown): Tag[] {
   }
 }
 
+function mapGoogleCandidate(value: unknown): GoogleCandidate | null {
+  if (!value || typeof value !== 'object') return null;
+  const place = value as {
+    id?: unknown;
+    displayName?: { text?: unknown };
+    formattedAddress?: unknown;
+    location?: { latitude?: unknown; longitude?: unknown };
+  };
+  const id = typeof place.id === 'string' ? place.id.trim() : '';
+  const name = typeof place.displayName?.text === 'string' ? place.displayName.text.trim() : '';
+  if (!id || !name) return null;
+  const address = typeof place.formattedAddress === 'string' && place.formattedAddress.trim() ? place.formattedAddress.trim() : null;
+  const lat = typeof place.location?.latitude === 'number' && Number.isFinite(place.location.latitude) ? place.location.latitude : null;
+  const lng = typeof place.location?.longitude === 'number' && Number.isFinite(place.location.longitude) ? place.location.longitude : null;
+  return { google_place_id: id, name, address, lat, lng };
+}
+
+function mapGoogleCandidates(value: unknown) {
+  if (!value || typeof value !== 'object' || !Array.isArray((value as { places?: unknown }).places)) return [];
+  return (value as { places: unknown[] }).places.map(mapGoogleCandidate).filter((place): place is GoogleCandidate => place !== null);
+}
+
+async function searchGooglePlaces(apiKey: string, query: string) {
+  const response = await fetch('https://places.googleapis.com/v1/places:searchText', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Goog-Api-Key': apiKey,
+      'X-Goog-FieldMask': 'places.id,places.displayName,places.formattedAddress,places.location',
+    },
+    body: JSON.stringify({ textQuery: query, maxResultCount: 8 }),
+  });
+  if (!response.ok) {
+    console.error('Google Places upstream status', response.status);
+    throw new Error('Google Places upstream request failed');
+  }
+  const payload = await response.json().catch(() => null);
+  return mapGoogleCandidates(payload);
+}
+
+function isAllowedGoogleHost(hostname: string) {
+  const host = hostname.toLowerCase().replace(/\.$/, '');
+  if (host === 'google.com' || host === 'www.google.com' || host === 'goo.gl' || host === 'maps.app.goo.gl') return true;
+  if (!host.startsWith('maps.google.')) return false;
+  const countryDomain = host.slice('maps.google.'.length);
+  return /^[a-z]{2}$/.test(countryDomain) || /^(?:com|co|net|org)\.[a-z]{2}$/.test(countryDomain);
+}
+
+function isShortGoogleHost(hostname: string) {
+  const host = hostname.toLowerCase().replace(/\.$/, '');
+  return host === 'goo.gl' || host === 'maps.app.goo.gl';
+}
+
+function parseGoogleMapsUrl(value: string) {
+  try {
+    const url = new URL(value);
+    if (url.protocol !== 'https:' || !isAllowedGoogleHost(url.hostname)) return null;
+    return url;
+  } catch {
+    return null;
+  }
+}
+
+async function followGoogleMapsRedirects(start: URL) {
+  let current = start;
+  for (let hop = 0; hop <= 3; hop += 1) {
+    const response = await fetch(current, { redirect: 'manual' });
+    if (![301, 302, 303, 307, 308].includes(response.status)) return current;
+    if (hop === 3) throw new Error('Too many Google Maps redirects');
+    const location = response.headers.get('location');
+    const next = location ? parseGoogleMapsUrl(new URL(location, current).toString()) : null;
+    if (!next) throw new Error('Google Maps redirect left the allowlist');
+    current = next;
+  }
+  throw new Error('Too many Google Maps redirects');
+}
+
+function parseCoordinatePair(value: string | null) {
+  if (!value) return null;
+  const match = value.match(/^\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*$/);
+  if (!match) return null;
+  const lat = Number(match[1]);
+  const lng = Number(match[2]);
+  return Number.isFinite(lat) && Number.isFinite(lng) && validCoordinate(lat, -90, 90) && validCoordinate(lng, -180, 180)
+    ? { lat, lng }
+    : null;
+}
+
+function distanceMeters(firstLat: number, firstLng: number, secondLat: number, secondLng: number) {
+  const latitudeRadians = ((firstLat + secondLat) / 2) * (Math.PI / 180);
+  const latitudeDelta = (secondLat - firstLat) * (Math.PI / 180);
+  const longitudeDelta = (secondLng - firstLng) * (Math.PI / 180) * Math.cos(latitudeRadians);
+  return 6_371_000 * Math.sqrt(latitudeDelta ** 2 + longitudeDelta ** 2);
+}
+
+function decodeGooglePlaceName(value: string) {
+  try {
+    return decodeURIComponent(value.replace(/\+/g, ' ')).trim() || null;
+  } catch {
+    return null;
+  }
+}
+
+function extractGoogleMapsCandidate(url: URL) {
+  const segments = url.pathname.split('/').filter(Boolean);
+  const placeSegmentIndex = segments.findIndex((segment) => segment.toLowerCase() === 'place');
+  const name = placeSegmentIndex >= 0 && segments[placeSegmentIndex + 1] ? decodeGooglePlaceName(segments[placeSegmentIndex + 1]) : null;
+  let decodedHref = url.href;
+  try {
+    decodedHref = decodeURIComponent(decodedHref);
+  } catch {
+    // Keep the original URL when an unrelated component is malformed.
+  }
+  const atCoordinates = decodedHref.match(/@(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?)/);
+  const dataCoordinates = decodedHref.match(/!3d(-?\d+(?:\.\d+)?)!4d(-?\d+(?:\.\d+)?)/);
+  const q = url.searchParams.get('q');
+  const coordinates = parseCoordinatePair(atCoordinates ? `${atCoordinates[1]},${atCoordinates[2]}` : dataCoordinates ? `${dataCoordinates[1]},${dataCoordinates[2]}` : q);
+  const query = coordinates ? name : name ?? q?.trim() ?? null;
+  return {
+    name: query,
+    lat: coordinates?.lat ?? null,
+    lng: coordinates?.lng ?? null,
+  };
+}
+
 function placeFromRow(row: Record<string, unknown>): Place {
   return {
     id: String(row.id),
@@ -114,7 +249,8 @@ function placeFromRow(row: Record<string, unknown>): Place {
     address: row.address === null ? null : String(row.address),
     lat: row.lat === null ? null : Number(row.lat),
     lng: row.lng === null ? null : Number(row.lng),
-    source: 'manual',
+    source: String(row.source) as Place['source'],
+    google_place_id: row.google_place_id === null || row.google_place_id === undefined ? null : String(row.google_place_id),
     notes: row.notes === null ? null : String(row.notes),
     created_at: String(row.created_at),
     updated_at: String(row.updated_at),
@@ -220,6 +356,74 @@ app.post('/api/lists', async (c) => {
 });
 
 app.get('/api/lists/:slug', (c) => c.json(c.get('list')));
+
+app.get('/api/lists/:slug/place-search', async (c) => {
+  if (!c.env.GOOGLE_PLACES_API_KEY) return jsonError(c, "Google Places search isn't configured", 503);
+  const query = (c.req.query('q') ?? '').trim();
+  if (query.length < 2) return jsonError(c, 'Search query must be at least 2 characters', 422);
+  try {
+    return c.json(await searchGooglePlaces(c.env.GOOGLE_PLACES_API_KEY, query));
+  } catch {
+    return jsonError(c, 'Google Places search failed', 502);
+  }
+});
+
+app.post('/api/lists/:slug/resolve-link', async (c) => {
+  if (!c.env.GOOGLE_PLACES_API_KEY) return jsonError(c, "Google Places search isn't configured", 503);
+  const body = await c.req.json<unknown>().catch(() => null);
+  const urlValue = body && typeof body === 'object' && 'url' in body ? (body as { url?: unknown }).url : undefined;
+  if (typeof urlValue !== 'string' || !urlValue.trim()) return jsonError(c, 'A Google Maps URL is required', 422);
+  const parsed = parseGoogleMapsUrl(urlValue.trim());
+  if (!parsed) return jsonError(c, 'Only HTTPS Google Maps links are supported', 422);
+
+  let finalUrl: URL;
+  try {
+    finalUrl = isShortGoogleHost(parsed.hostname) ? await followGoogleMapsRedirects(parsed) : parsed;
+  } catch {
+    return jsonError(c, 'Could not follow that Google Maps link', 422);
+  }
+  const extracted = extractGoogleMapsCandidate(finalUrl);
+  const coordinateCandidate = {
+    google_place_id: null,
+    name: extracted.name ?? 'Google Maps location',
+    address: null,
+    lat: extracted.lat,
+    lng: extracted.lng,
+  } satisfies GoogleCandidate;
+  if (extracted.lat === null || extracted.lng === null) {
+    if (!extracted.name) return jsonError(c, 'Could not extract a place from that Google Maps link', 422);
+    try {
+      const candidates = await searchGooglePlaces(c.env.GOOGLE_PLACES_API_KEY, extracted.name);
+      if (!candidates.length) return jsonError(c, 'No place was found for that Google Maps link', 422);
+      return c.json(candidates[0]);
+    } catch {
+      return jsonError(c, 'Google Places search failed', 502);
+    }
+  }
+  if (extracted.name) {
+    try {
+      const candidates = await searchGooglePlaces(c.env.GOOGLE_PLACES_API_KEY, extracted.name);
+      const topCandidate = candidates[0];
+      if (
+        topCandidate &&
+        topCandidate.lat !== null &&
+        topCandidate.lng !== null &&
+        distanceMeters(extracted.lat, extracted.lng, topCandidate.lat, topCandidate.lng) <= 200
+      ) {
+        return c.json({
+          google_place_id: topCandidate.google_place_id,
+          name: extracted.name,
+          address: topCandidate.address,
+          lat: extracted.lat,
+          lng: extracted.lng,
+        } satisfies GoogleCandidate);
+      }
+    } catch {
+      // Keep the URL-derived candidate when optional enrichment fails.
+    }
+  }
+  return c.json(coordinateCandidate);
+});
 
 app.post('/api/lists/:slug/rotate', async (c) => {
   const list = c.get('list');
@@ -376,6 +580,13 @@ app.post('/api/lists/:slug/places', async (c) => {
   const lat = parseNullableNumber(body.lat);
   const lng = parseNullableNumber(body.lng);
   const notes = body.notes === null || body.notes === undefined ? null : typeof body.notes === 'string' ? body.notes : undefined;
+  const source = body.source === undefined ? 'manual' : body.source;
+  const googlePlaceId =
+    body.google_place_id === null || body.google_place_id === undefined
+      ? null
+      : typeof body.google_place_id === 'string' && body.google_place_id.trim()
+        ? body.google_place_id.trim()
+        : undefined;
   if (!name) return jsonError(c, 'Name is required', 422);
   if (
     address === undefined ||
@@ -387,6 +598,8 @@ app.post('/api/lists/:slug/places', async (c) => {
   ) {
     return jsonError(c, 'Invalid place fields', 422);
   }
+  if (source !== 'manual' && source !== 'google' && source !== 'link') return jsonError(c, 'Invalid place source', 422);
+  if (googlePlaceId === undefined) return jsonError(c, 'Invalid Google place ID', 422);
   if (notes && notes.length > MAX_NOTES_LENGTH) return jsonError(c, 'Notes are too long', 413);
   const count = await c.env.DB.prepare('SELECT COUNT(*) AS count FROM places WHERE list_id = ?1').bind(list.id).first<{ count: number }>();
   if (Number(count?.count ?? 0) >= MAX_PLACES) return jsonError(c, 'Place limit reached', 413);
@@ -395,8 +608,8 @@ app.post('/api/lists/:slug/places', async (c) => {
   const timestamp = now();
   await c.env.DB.batch([
     c.env.DB.prepare(
-      'INSERT INTO places (id, list_id, name, address, lat, lng, source, notes, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)',
-    ).bind(id, list.id, name, address, lat, lng, 'manual', notes, timestamp, timestamp),
+      'INSERT INTO places (id, list_id, name, address, lat, lng, source, google_place_id, notes, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)',
+    ).bind(id, list.id, name, address, lat, lng, source, googlePlaceId, notes, timestamp, timestamp),
     ...tags.map((tag) => c.env.DB.prepare('INSERT INTO place_tags (place_id, tag_id) VALUES (?1, ?2)').bind(id, tag.id)),
   ]);
   return c.json(await getPlace(c.env.DB, list.id, id), 201);

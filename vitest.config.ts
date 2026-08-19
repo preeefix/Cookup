@@ -12,7 +12,7 @@ export default defineWorkersConfig(async () => {
             configPath: './wrangler.toml',
           },
           miniflare: {
-            bindings: { TEST_MIGRATIONS: migrations },
+            bindings: { TEST_MIGRATIONS: migrations, GOOGLE_PLACES_API_KEY: 'test-key' },
           },
         },
       },
