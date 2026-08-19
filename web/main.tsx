@@ -261,6 +261,7 @@ function ListPage({ slug }: { slug: string }) {
     source: 'manual' as 'manual' | 'google' | 'link',
     google_place_id: '',
   });
+  const [addOpen, setAddOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editForm, setEditForm] = useState({ name: '', address: '', notes: '', tags: [] as string[] });
   const [error, setError] = useState('');
@@ -346,22 +347,24 @@ function ListPage({ slug }: { slug: string }) {
         method: 'POST',
         body: JSON.stringify({ ...form, lat, lng, google_place_id: form.google_place_id || null }),
       });
-      setForm({
-        name: '',
-        address: '',
-        lat: '',
-        lng: '',
-        notes: '',
-        tags: [],
-        source: 'manual',
-        google_place_id: '',
-      });
-      setGoogleCandidates([]);
-      setLinkCandidate(null);
+      closeAdd();
       await refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not save place');
     }
+  }
+
+  function resetAddTools() {
+    setGoogleQuery('');
+    setGoogleCandidates([]);
+    setLinkUrl('');
+    setLinkCandidate(null);
+  }
+
+  function closeAdd() {
+    setForm({ name: '', address: '', lat: '', lng: '', notes: '', tags: [], source: 'manual', google_place_id: '' });
+    resetAddTools();
+    setAddOpen(false);
   }
 
   function useGoogleCandidate(candidate: GoogleCandidate, source: 'google' | 'link') {
@@ -478,12 +481,19 @@ function ListPage({ slug }: { slug: string }) {
               )}
             </div>
           </section>
+          {addOpen ? (
           <form className="card add-card" onSubmit={addPlace}>
-            <h2>Add a place</h2>
+            <div className="add-header">
+              <h2>Add a place</h2>
+              <button type="button" className="delete-link" onClick={closeAdd}>
+                Cancel
+              </button>
+            </div>
             <div className="google-tools">
               <label htmlFor="google-place-search">Find a place on Google</label>
               <input
                 id="google-place-search"
+                autoFocus
                 value={googleQuery}
                 onChange={(event) => {
                   setGoogleQuery(event.target.value);
@@ -541,6 +551,11 @@ function ListPage({ slug }: { slug: string }) {
             <TagInput tags={tags} value={form.tags} setValue={(next) => setForm({ ...form, tags: next })} />
             <button type="submit">Save place</button>
           </form>
+          ) : (
+            <button type="button" className="card add-trigger" onClick={() => setAddOpen(true)}>
+              + Add a place
+            </button>
+          )}
           <section className="places">
               {places.length === 0 ? <div className="empty card">No places match yet. Add your first one.</div> : places.map((place) => (
                 <article className="place card" key={place.id}>

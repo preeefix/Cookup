@@ -42,6 +42,10 @@ button[type=submit] { border: 0; border-radius: 10px; padding: 12px 18px; backgr
 .workspace { display: grid; grid-template-columns: minmax(340px, 420px) 1fr; gap: 22px; align-items: start; }
 .results-pane { display: grid; gap: 18px; align-content: start; }
 .add-card { display: grid; gap: 12px; }
+.add-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.add-header h2 { margin: 0; }
+.add-trigger { padding: 16px; color: #a45432; font-weight: 700; text-align: center; }
+.add-trigger:hover { border-color: #a45432; background: #fffaf3; }
 .google-tools { display: grid; gap: 8px; padding-bottom: 4px; border-bottom: 1px solid #e5ded3; }
 .google-tools label { margin: 4px 0 0; font-size: 13px; }
 .google-tools .muted { margin: 0; }
