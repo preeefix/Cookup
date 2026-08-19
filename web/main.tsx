@@ -191,15 +191,25 @@ function ListPage({ slug }: { slug: string }) {
   }
 
   async function removePlace(id: string) {
-    await api(`/api/lists/${slug}/places/${id}`, { method: 'DELETE' });
-    await refresh();
+    setError('');
+    try {
+      await api(`/api/lists/${slug}/places/${id}`, { method: 'DELETE' });
+      await refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not delete place');
+    }
   }
 
   async function rotate() {
     if (!window.confirm('Rotate this URL? The old URL will stop working immediately.')) return;
-    const result = await api<{ slug: string }>(`/api/lists/${slug}/rotate`, { method: 'POST' });
-    rememberSlug(result.slug, slug);
-    window.location.href = `/l/${result.slug}`;
+    setError('');
+    try {
+      const result = await api<{ slug: string }>(`/api/lists/${slug}/rotate`, { method: 'POST' });
+      rememberSlug(result.slug, slug);
+      window.location.href = `/l/${result.slug}`;
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not rotate URL');
+    }
   }
 
   function toggleTag(name: string) {

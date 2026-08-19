@@ -310,11 +310,11 @@ app.get('/api/lists/:slug/places', async (c) => {
       .filter(Boolean);
     if (q.length >= 2 && terms.length) {
       clauses.push(`p.id IN (SELECT place_id FROM places_fts WHERE places_fts MATCH ? AND list_id = ?)`);
-      params.push(terms.map((term) => `${term}*`).join(' AND '), list.id);
+      params.push(terms.map((term) => `"${term}"*`).join(' AND '), list.id);
     } else {
-      clauses.push(`(p.name LIKE ? OR COALESCE(p.address, '') LIKE ? OR COALESCE(p.notes, '') LIKE ?
-        OR EXISTS (SELECT 1 FROM place_tags qpt JOIN tags qt ON qt.id = qpt.tag_id WHERE qpt.place_id = p.id AND qt.name LIKE ?))`);
-      const like = `%${q}%`;
+      clauses.push(`(p.name LIKE ? ESCAPE '!' OR COALESCE(p.address, '') LIKE ? ESCAPE '!' OR COALESCE(p.notes, '') LIKE ? ESCAPE '!'
+        OR EXISTS (SELECT 1 FROM place_tags qpt JOIN tags qt ON qt.id = qpt.tag_id WHERE qpt.place_id = p.id AND qt.name LIKE ? ESCAPE '!'))`);
+      const like = `%${q.replace(/[!%_]/g, (character) => `!${character}`)}%`;
       params.push(like, like, like, like);
     }
   }

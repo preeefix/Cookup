@@ -101,6 +101,31 @@ describe('phase 1 API', () => {
     expect((await response.json() as Array<{ name: string }>).map((place) => place.name)).toEqual(['Ramen House']);
   });
 
+  it('quotes reserved FTS terms', async () => {
+    const list = await createList('Reserved term');
+    await addPlace(list.slug, { name: 'OR House' });
+
+    const response = await SELF.fetch(`http://example.com/api/lists/${list.slug}/places?q=OR`);
+    expect(response.status).toBe(200);
+    expect((await response.json() as Array<{ name: string }>).map((place) => place.name)).toEqual(['OR House']);
+  });
+
+  it('escapes LIKE wildcards in short queries', async () => {
+    const list = await createList('Wildcard query');
+    await addPlace(list.slug, { name: 'Percent % Place' });
+    await addPlace(list.slug, { name: 'Underscore _ Place' });
+    await addPlace(list.slug, { name: 'Tagged Percent', tags: ['100%'] });
+    await addPlace(list.slug, { name: 'Ordinary Place' });
+
+    const percentResponse = await SELF.fetch(`http://example.com/api/lists/${list.slug}/places?q=%25`);
+    const underscoreResponse = await SELF.fetch(`http://example.com/api/lists/${list.slug}/places?q=_`);
+    expect((await percentResponse.json() as Array<{ name: string }>).map((place) => place.name)).toEqual([
+      'Tagged Percent',
+      'Percent % Place',
+    ]);
+    expect((await underscoreResponse.json() as Array<{ name: string }>).map((place) => place.name)).toEqual(['Underscore _ Place']);
+  });
+
   it('updates the FTS index when a tag is renamed', async () => {
     const list = await createList('Rename tag');
     await addPlace(list.slug, { name: 'Noodles', tags: ['old-name'] });
