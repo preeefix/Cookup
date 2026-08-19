@@ -27,11 +27,11 @@ async function addPlace(slug: string, place: Record<string, unknown>) {
   return response.json();
 }
 
-function mockGoogleSearch(payload: unknown) {
+function mockGoogleSearch(payload: unknown, status = 200) {
   fetchMock
     .get('https://places.googleapis.com')
     .intercept({ method: 'POST', path: /.*/ })
-    .reply(200, payload);
+    .reply(status, payload);
 }
 
 async function fetchWithoutGoogleKey(path: string, options?: RequestInit) {
@@ -256,6 +256,114 @@ describe('Google Places API', () => {
       expect(response.status).toBe(200);
       expect(await response.json()).toMatchObject({ google_place_id: null, name, address: null, lat, lng });
     }
+  });
+
+  it('decodes link names once and keeps coordinate-looking text queries as text', async () => {
+    const list = await createList('Link name decoding');
+    const names = [
+      ['https://www.google.com/maps/place/100%25+Coffee/@1,2,17z', '100% Coffee'],
+      ['https://www.google.com/maps/place/C%2B%2B+Cafe/@3,4,17z', 'C++ Cafe'],
+    ] as const;
+    for (const [url, name] of names) {
+      const response = await SELF.fetch(`http://example.com/api/lists/${list.slug}/resolve-link`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url }),
+      });
+      expect(response.status).toBe(200);
+      expect((await response.json()) as { name: string }).toMatchObject({ name });
+    }
+
+    mockGoogleSearch({
+      places: [
+        {
+          id: 'places/suite',
+          displayName: { text: 'Suite 5, 20 Broadway' },
+          formattedAddress: '20 Broadway',
+          location: { latitude: 40, longitude: -73 },
+        },
+      ],
+    });
+    const textResponse = await SELF.fetch(`http://example.com/api/lists/${list.slug}/resolve-link`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url: 'https://www.google.com/maps?q=Suite%205%2C%2020%20Broadway' }),
+    });
+    expect(textResponse.status).toBe(200);
+    expect(await textResponse.json()).toMatchObject({
+      google_place_id: 'places/suite',
+      name: 'Suite 5, 20 Broadway',
+      lat: 40,
+      lng: -73,
+    });
+    fetchMock.assertNoPendingInterceptors();
+  });
+
+  it('enriches coordinate links only when the top result is nearby', async () => {
+    const list = await createList('Link enrichment');
+    mockGoogleSearch({
+      places: [
+        {
+          id: 'places/near',
+          displayName: { text: 'Near Cafe' },
+          formattedAddress: '1 Near Street',
+          location: { latitude: 35.0005, longitude: 139.0005 },
+        },
+      ],
+    });
+    const nearResponse = await SELF.fetch(`http://example.com/api/lists/${list.slug}/resolve-link`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url: 'https://www.google.com/maps/place/Near+Cafe/@35,139,17z' }),
+    });
+    expect(nearResponse.status).toBe(200);
+    expect(await nearResponse.json()).toMatchObject({
+      google_place_id: 'places/near',
+      name: 'Near Cafe',
+      address: '1 Near Street',
+      lat: 35,
+      lng: 139,
+    });
+
+    mockGoogleSearch({
+      places: [
+        {
+          id: 'places/far',
+          displayName: { text: 'Far Cafe' },
+          formattedAddress: '1 Far Street',
+          location: { latitude: 36, longitude: 140 },
+        },
+      ],
+    });
+    const farResponse = await SELF.fetch(`http://example.com/api/lists/${list.slug}/resolve-link`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url: 'https://www.google.com/maps/place/Far+Cafe/@35,139,17z' }),
+    });
+    expect(farResponse.status).toBe(200);
+    expect(await farResponse.json()).toMatchObject({
+      google_place_id: null,
+      name: 'Far Cafe',
+      address: null,
+      lat: 35,
+      lng: 139,
+    });
+
+    mockGoogleSearch({ error: 'upstream failure' }, 500);
+    const failedResponse = await SELF.fetch(`http://example.com/api/lists/${list.slug}/resolve-link`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url: 'https://www.google.com/maps/place/Failed+Cafe/@35,139,17z' }),
+    });
+    expect(failedResponse.status).toBe(200);
+    expect(await failedResponse.json()).toMatchObject({
+      google_place_id: null,
+      name: 'Failed Cafe',
+      address: null,
+      lat: 35,
+      lng: 139,
+    });
+    fetchMock.assertNoPendingInterceptors();
   });
 
   it('uses Text Search to resolve a named Google Maps query', async () => {

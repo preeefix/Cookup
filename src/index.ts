@@ -195,13 +195,20 @@ async function followGoogleMapsRedirects(start: URL) {
 
 function parseCoordinatePair(value: string | null) {
   if (!value) return null;
-  const match = value.match(/(-?\d+(?:\.\d+)?)[,\s]+(-?\d+(?:\.\d+)?)/);
+  const match = value.match(/^\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*$/);
   if (!match) return null;
   const lat = Number(match[1]);
   const lng = Number(match[2]);
   return Number.isFinite(lat) && Number.isFinite(lng) && validCoordinate(lat, -90, 90) && validCoordinate(lng, -180, 180)
     ? { lat, lng }
     : null;
+}
+
+function distanceMeters(firstLat: number, firstLng: number, secondLat: number, secondLng: number) {
+  const latitudeRadians = ((firstLat + secondLat) / 2) * (Math.PI / 180);
+  const latitudeDelta = (secondLat - firstLat) * (Math.PI / 180);
+  const longitudeDelta = (secondLng - firstLng) * (Math.PI / 180) * Math.cos(latitudeRadians);
+  return 6_371_000 * Math.sqrt(latitudeDelta ** 2 + longitudeDelta ** 2);
 }
 
 function decodeGooglePlaceName(value: string) {
@@ -228,7 +235,7 @@ function extractGoogleMapsCandidate(url: URL) {
   const coordinates = parseCoordinatePair(atCoordinates ? `${atCoordinates[1]},${atCoordinates[2]}` : dataCoordinates ? `${dataCoordinates[1]},${dataCoordinates[2]}` : q);
   const query = coordinates ? name : name ?? q?.trim() ?? null;
   return {
-    name: query ? decodeGooglePlaceName(query) : null,
+    name: query,
     lat: coordinates?.lat ?? null,
     lng: coordinates?.lng ?? null,
   };
@@ -376,6 +383,13 @@ app.post('/api/lists/:slug/resolve-link', async (c) => {
     return jsonError(c, 'Could not follow that Google Maps link', 422);
   }
   const extracted = extractGoogleMapsCandidate(finalUrl);
+  const coordinateCandidate = {
+    google_place_id: null,
+    name: extracted.name ?? 'Google Maps location',
+    address: null,
+    lat: extracted.lat,
+    lng: extracted.lng,
+  } satisfies GoogleCandidate;
   if (extracted.lat === null || extracted.lng === null) {
     if (!extracted.name) return jsonError(c, 'Could not extract a place from that Google Maps link', 422);
     try {
@@ -386,13 +400,29 @@ app.post('/api/lists/:slug/resolve-link', async (c) => {
       return jsonError(c, 'Google Places search failed', 502);
     }
   }
-  return c.json({
-    google_place_id: null,
-    name: extracted.name ?? 'Google Maps location',
-    address: null,
-    lat: extracted.lat,
-    lng: extracted.lng,
-  } satisfies GoogleCandidate);
+  if (extracted.name) {
+    try {
+      const candidates = await searchGooglePlaces(c.env.GOOGLE_PLACES_API_KEY, extracted.name);
+      const topCandidate = candidates[0];
+      if (
+        topCandidate &&
+        topCandidate.lat !== null &&
+        topCandidate.lng !== null &&
+        distanceMeters(extracted.lat, extracted.lng, topCandidate.lat, topCandidate.lng) <= 200
+      ) {
+        return c.json({
+          google_place_id: topCandidate.google_place_id,
+          name: extracted.name,
+          address: topCandidate.address,
+          lat: extracted.lat,
+          lng: extracted.lng,
+        } satisfies GoogleCandidate);
+      }
+    } catch {
+      // Keep the URL-derived candidate when optional enrichment fails.
+    }
+  }
+  return c.json(coordinateCandidate);
 });
 
 app.post('/api/lists/:slug/rotate', async (c) => {
