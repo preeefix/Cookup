@@ -1,4 +1,4 @@
-import React, { FormEvent, useEffect, useMemo, useState } from 'react';
+import React, { FormEvent, useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import './styles.css';
 
@@ -84,8 +84,12 @@ function TagInput({ tags, value, setValue }: { tags: Tag[]; value: string[]; set
   const [text, setText] = useState('');
   const suggestions = tags.filter((tag) => !value.some((item) => item.toLowerCase() === tag.name.toLowerCase()) && tag.name.toLowerCase().includes(text.toLowerCase()));
   function addTag(raw: string) {
-    const tag = raw.trim();
-    if (tag && !value.some((item) => item.toLowerCase() === tag.toLowerCase())) setValue([...value, tag]);
+    const next = [...value];
+    for (const part of raw.split(',')) {
+      const tag = part.trim();
+      if (tag && !next.some((item) => item.toLowerCase() === tag.toLowerCase())) next.push(tag);
+    }
+    if (next.length !== value.length) setValue(next);
     setText('');
   }
   return (
@@ -132,22 +136,38 @@ function ListPage({ slug }: { slug: string }) {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editForm, setEditForm] = useState({ name: '', address: '', notes: '', tags: [] as string[] });
   const [error, setError] = useState('');
+  const [debouncedQuery, setDebouncedQuery] = useState('');
+  const refreshRun = useRef(0);
+  const refreshSlug = useRef<string | null>(null);
   const filter = useMemo(
-    () => `?q=${encodeURIComponent(query)}&tags=${encodeURIComponent(selectedTags.join(','))}&mode=${mode}`,
-    [mode, query, selectedTags],
+    () => `?q=${encodeURIComponent(debouncedQuery)}&tags=${encodeURIComponent(selectedTags.join(','))}&mode=${mode}`,
+    [debouncedQuery, mode, selectedTags],
   );
 
-  async function refresh() {
-    const [nextPlaces, nextTags] = await Promise.all([
-      api<Place[]>(`/api/lists/${slug}/places${filter}`),
-      api<Tag[]>(`/api/lists/${slug}/tags`),
-    ]);
-    setPlaces(nextPlaces);
-    setTags(nextTags);
+  useEffect(() => {
+    const timer = window.setTimeout(() => setDebouncedQuery(query), 200);
+    return () => window.clearTimeout(timer);
+  }, [query]);
+
+  async function refresh(includeTags = true) {
+    const run = ++refreshRun.current;
+    try {
+      const [nextPlaces, nextTags] = await Promise.all([
+        api<Place[]>(`/api/lists/${slug}/places${filter}`),
+        includeTags ? api<Tag[]>(`/api/lists/${slug}/tags`) : Promise.resolve(null),
+      ]);
+      if (run !== refreshRun.current) return;
+      setPlaces(nextPlaces);
+      if (nextTags) setTags(nextTags);
+    } catch (err) {
+      if (run === refreshRun.current) throw err;
+    }
   }
   useEffect(() => {
     rememberSlug(slug);
-    refresh().catch((err) => setError(err instanceof Error ? err.message : 'Could not load list'));
+    const includeTags = refreshSlug.current !== slug;
+    refreshSlug.current = slug;
+    refresh(includeTags).catch((err) => setError(err instanceof Error ? err.message : 'Could not load list'));
   }, [slug, filter]);
 
   async function addPlace(event: FormEvent) {

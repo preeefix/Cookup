@@ -66,6 +66,29 @@ describe('phase 1 API', () => {
     expect(tags[0].usage_count).toBe(1);
   });
 
+  it('splits comma-separated tags and caps tag names', async () => {
+    const list = await createList('Comma tags');
+    await addPlace(list.slug, {
+      name: 'Comma Place',
+      tags: ['ramen, cheap', 'x'.repeat(100)],
+    });
+    const tagsResponse = await SELF.fetch(`http://example.com/api/lists/${list.slug}/tags`);
+    const tags = (await tagsResponse.json()) as Array<{ id: string; name: string }>;
+    expect(tags.map((tag) => tag.name)).toEqual(['cheap', 'ramen', 'x'.repeat(80)]);
+
+    const cheapResponse = await SELF.fetch(`http://example.com/api/lists/${list.slug}/places?tags=cheap`);
+    expect((await cheapResponse.json() as Array<{ name: string }>).map((place) => place.name)).toEqual(['Comma Place']);
+
+    const renameResponse = await SELF.fetch(`http://example.com/api/lists/${list.slug}/tags/${tags.find((tag) => tag.name === 'ramen')?.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: 'red, spicy' }),
+    });
+    expect(renameResponse.status).toBe(200);
+    const spicyResponse = await SELF.fetch(`http://example.com/api/lists/${list.slug}/places?tags=spicy`);
+    expect((await spicyResponse.json() as Array<{ name: string }>).map((place) => place.name)).toEqual(['Comma Place']);
+  });
+
   it('intersects text and tag filters', async () => {
     const list = await createList('Search');
     await addPlace(list.slug, { name: 'Ramen House', address: 'Main Street', tags: ['quick', 'noodles'] });

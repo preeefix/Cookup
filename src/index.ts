@@ -45,6 +45,7 @@ type Tag = {
 const app = new Hono<{ Bindings: Bindings; Variables: Variables }>();
 const MAX_PLACES = 500;
 const MAX_NOTES_LENGTH = 2000;
+const MAX_TAG_NAME_LENGTH = 80;
 const LAST_SEEN_REFRESH_MS = 60 * 60 * 1000;
 const BASE58 = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
 
@@ -75,11 +76,13 @@ function cleanTags(input: unknown): string[] {
   const tags: string[] = [];
   for (const value of input) {
     if (typeof value !== 'string') continue;
-    const name = value.trim().replace(/\s+/g, ' ');
-    const key = name.toLocaleLowerCase();
-    if (name && !seen.has(key)) {
-      seen.add(key);
-      tags.push(name);
+    for (const part of value.split(',')) {
+      const name = part.trim().replace(/\s+/g, ' ').slice(0, MAX_TAG_NAME_LENGTH);
+      const key = name.toLocaleLowerCase();
+      if (name && !seen.has(key)) {
+        seen.add(key);
+        tags.push(name);
+      }
     }
   }
   return tags;
@@ -255,18 +258,51 @@ app.get('/api/lists/:slug/tags', async (c) => {
 app.patch('/api/lists/:slug/tags/:id', async (c) => {
   const list = c.get('list');
   const body = await c.req.json<{ name?: unknown; color?: unknown }>().catch(() => ({}) as { name?: unknown; color?: unknown });
-  const name = body.name === undefined ? undefined : typeof body.name === 'string' ? body.name.trim() : '';
+  const names = body.name === undefined ? undefined : cleanTags([body.name]);
   if (body.color !== undefined && body.color !== null && typeof body.color !== 'string') {
     return jsonError(c, 'Invalid tag color', 422);
   }
   const color = body.color === null || body.color === undefined ? body.color : body.color.trim();
-  if (name === '') return jsonError(c, 'Tag name cannot be empty', 422);
+  if (body.name !== undefined && !names?.length) return jsonError(c, 'Tag name cannot be empty', 422);
   try {
+    if (names && names.length > 1) {
+      const current = await c.env.DB.prepare('SELECT id FROM tags WHERE id = ?1 AND list_id = ?2')
+        .bind(c.req.param('id'), list.id)
+        .first<{ id: string }>();
+      if (!current) return c.text('Not Found', 404);
+      const places = await c.env.DB.prepare('SELECT place_id FROM place_tags WHERE tag_id = ?1')
+        .bind(current.id)
+        .all<{ place_id: string }>();
+      const splitTags = await ensureTags(c.env.DB, list.id, names);
+      const statements = splitTags.flatMap((tag) =>
+        places.results.map((place) =>
+          c.env.DB.prepare('INSERT OR IGNORE INTO place_tags (place_id, tag_id) VALUES (?1, ?2)').bind(place.place_id, tag.id),
+        ),
+      );
+      statements.push(c.env.DB.prepare('DELETE FROM place_tags WHERE tag_id = ?1').bind(current.id));
+      if (!splitTags.some((tag) => tag.id === current.id)) {
+        statements.push(c.env.DB.prepare('DELETE FROM tags WHERE id = ?1 AND list_id = ?2').bind(current.id, list.id));
+      }
+      if (color !== undefined) {
+        statements.push(
+          ...splitTags.map((tag) =>
+            c.env.DB.prepare('UPDATE tags SET color = ?1 WHERE id = ?2 AND list_id = ?3')
+              .bind(color ? color.slice(0, 32) : null, tag.id, list.id),
+          ),
+        );
+      }
+      await c.env.DB.batch(statements);
+      return c.json(
+        await c.env.DB.prepare('SELECT id, list_id, name, color FROM tags WHERE id = ?1 AND list_id = ?2')
+          .bind(splitTags[0].id, list.id)
+          .first<Tag>(),
+      );
+    }
     const fields: string[] = [];
     const values: unknown[] = [];
-    if (name !== undefined) {
+    if (names !== undefined) {
       fields.push('name = ?');
-      values.push(name.slice(0, 80));
+      values.push(names[0]);
     }
     if (color !== undefined) {
       fields.push('color = ?');
