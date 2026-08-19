@@ -52,9 +52,9 @@ async function api<T>(path: string, options?: RequestInit): Promise<T> {
   return response.status === 204 ? (undefined as T) : response.json();
 }
 
-function rememberSlug(slug: string, replacedSlug?: string) {
+function rememberSlug(slug: string) {
   const slugs = JSON.parse(localStorage.getItem(seenKey) ?? '[]') as string[];
-  const previous = slugs.filter((item) => item !== slug && item !== replacedSlug);
+  const previous = slugs.filter((item) => item !== slug);
   localStorage.setItem(seenKey, JSON.stringify([slug, ...previous].slice(0, 20)));
 }
 
@@ -432,15 +432,14 @@ function ListPage({ slug }: { slug: string }) {
     }
   }
 
-  async function rotate() {
-    if (!window.confirm('Rotate this URL? The old URL will stop working immediately.')) return;
+  async function copyList() {
     setError('');
     try {
-      const result = await api<{ slug: string }>(`/api/lists/${slug}/rotate`, { method: 'POST' });
-      rememberSlug(result.slug, slug);
+      const result = await api<{ slug: string }>(`/api/lists/${slug}/copy`, { method: 'POST' });
+      rememberSlug(result.slug);
       window.location.href = `/l/${result.slug}`;
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Could not rotate URL');
+      setError(err instanceof Error ? err.message : 'Could not copy list');
     }
   }
 
@@ -455,8 +454,8 @@ function ListPage({ slug }: { slug: string }) {
           <div className="eyebrow">COOKUP LIST</div>
           <h1>Saved places</h1>
         </div>
-        <button type="button" className="danger-link" onClick={rotate}>
-          Rotate URL
+        <button type="button" className="danger-link" onClick={copyList}>
+          Copy list
         </button>
       </header>
       {error && <div className="error notice">{error}</div>}

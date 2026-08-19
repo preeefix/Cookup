@@ -63,14 +63,106 @@ describe('phase 1 API', () => {
     expect(await unknown.text()).toBe('Not Found');
   });
 
-  it('rotates a slug and invalidates the old URL', async () => {
-    const list = await createList('Rotate');
-    const response = await SELF.fetch(`http://example.com/api/lists/${list.slug}/rotate`, { method: 'POST' });
-    expect(response.status).toBe(200);
-    const rotated = (await response.json()) as { slug: string };
-    expect(rotated.slug).not.toBe(list.slug);
-    expect((await SELF.fetch(`http://example.com/api/lists/${list.slug}`)).status).toBe(404);
-    expect((await SELF.fetch(`http://example.com/api/lists/${rotated.slug}`)).status).toBe(200);
+  it('copies a populated list with isolated content and searchable FTS entries', async () => {
+    const source = await createList('Copy source');
+    await addPlace(source.slug, {
+      name: 'Copy Ramen',
+      address: '1 Noodle Road',
+      lat: 35.6,
+      lng: 139.7,
+      source: 'google',
+      google_place_id: 'places/ramen',
+      notes: 'Try the spicy broth',
+      tags: ['ramen', 'tokyo'],
+    });
+    await addPlace(source.slug, { name: 'Copy Cafe', tags: ['cafe'] });
+    const sourceTagsResponse = await SELF.fetch(`http://example.com/api/lists/${source.slug}/tags`);
+    const sourceTags = (await sourceTagsResponse.json()) as Array<{ id: string; name: string; color: string | null }>;
+    const colorResponse = await SELF.fetch(`http://example.com/api/lists/${source.slug}/tags/${sourceTags[0].id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ color: '#a45432' }),
+    });
+    expect(colorResponse.status).toBe(200);
+
+    const sourcePlacesResponse = await SELF.fetch(`http://example.com/api/lists/${source.slug}/places`);
+    const sourcePlaces = (await sourcePlacesResponse.json()) as Array<{
+      id: string;
+      list_id: string;
+      name: string;
+      address: string | null;
+      lat: number | null;
+      lng: number | null;
+      source: string;
+      google_place_id: string | null;
+      notes: string | null;
+      tags: Array<{ id: string; name: string }>;
+    }>;
+    const response = await SELF.fetch(`http://example.com/api/lists/${source.slug}/copy`, { method: 'POST' });
+    expect(response.status).toBe(201);
+    const copy = (await response.json()) as { id: string; slug: string; name: string; url: string };
+    expect(copy.id).not.toBe(source.id);
+    expect(copy.slug).not.toBe(source.slug);
+    expect(copy.name).toBe('Copy source (copy)');
+    expect(copy.url).toContain(`/l/${copy.slug}`);
+
+    const copiedPlacesResponse = await SELF.fetch(`http://example.com/api/lists/${copy.slug}/places`);
+    const copiedPlaces = (await copiedPlacesResponse.json()) as Array<{
+      id: string;
+      list_id: string;
+      name: string;
+      address: string | null;
+      lat: number | null;
+      lng: number | null;
+      source: string;
+      google_place_id: string | null;
+      notes: string | null;
+      tags: Array<{ id: string; name: string }>;
+    }>;
+    expect(copiedPlaces).toHaveLength(sourcePlaces.length);
+    expect(copiedPlaces.map((place) => place.name).sort()).toEqual(sourcePlaces.map((place) => place.name).sort());
+    for (const sourcePlace of sourcePlaces) {
+      const copiedPlace = copiedPlaces.find((place) => place.name === sourcePlace.name);
+      expect(copiedPlace).toBeDefined();
+      expect(copiedPlace?.id).not.toBe(sourcePlace.id);
+      expect(copiedPlace?.list_id).not.toBe(sourcePlace.list_id);
+      expect(copiedPlace).toMatchObject({
+        address: sourcePlace.address,
+        lat: sourcePlace.lat,
+        lng: sourcePlace.lng,
+        source: sourcePlace.source,
+        google_place_id: sourcePlace.google_place_id,
+        notes: sourcePlace.notes,
+      });
+      expect(copiedPlace?.tags.map((tag) => tag.name).sort()).toEqual(sourcePlace.tags.map((tag) => tag.name).sort());
+      expect(copiedPlace?.tags.map((tag) => tag.id).sort()).not.toEqual(sourcePlace.tags.map((tag) => tag.id).sort());
+    }
+    const copiedTagsResponse = await SELF.fetch(`http://example.com/api/lists/${copy.slug}/tags`);
+    const copiedTags = (await copiedTagsResponse.json()) as Array<{ id: string; name: string; color: string | null }>;
+    expect(copiedTags.map(({ name, color }) => ({ name, color }))).toEqual(
+      sourceTags.map((tag) => ({ name: tag.name, color: tag.id === sourceTags[0].id ? '#a45432' : tag.color })),
+    );
+
+    const searchResponse = await SELF.fetch(`http://example.com/api/lists/${copy.slug}/places?q=spicy`);
+    expect((await searchResponse.json() as Array<{ name: string }>).map((place) => place.name)).toEqual(['Copy Ramen']);
+
+    const deleteResponse = await SELF.fetch(`http://example.com/api/lists/${copy.slug}/places/${copiedPlaces[0].id}`, { method: 'DELETE' });
+    expect(deleteResponse.status).toBe(204);
+    const sourceAfterDelete = await SELF.fetch(`http://example.com/api/lists/${source.slug}/places`);
+    expect((await sourceAfterDelete.json() as Array<{ name: string }>).map((place) => place.name)).toEqual(['Copy Cafe', 'Copy Ramen']);
+  });
+
+  it('copies an empty list and removes the rotate route', async () => {
+    const source = await createList('Empty source');
+    const response = await SELF.fetch(`http://example.com/api/lists/${source.slug}/copy`, { method: 'POST' });
+    expect(response.status).toBe(201);
+    const copy = (await response.json()) as { slug: string; name: string };
+    expect(copy.name).toBe('Empty source (copy)');
+    expect(await (await SELF.fetch(`http://example.com/api/lists/${copy.slug}/places`)).json()).toEqual([]);
+    expect(await (await SELF.fetch(`http://example.com/api/lists/${copy.slug}/tags`)).json()).toEqual([]);
+
+    const rotateResponse = await SELF.fetch(`http://example.com/api/lists/${source.slug}/rotate`, { method: 'POST' });
+    expect(rotateResponse.status).toBe(404);
   });
 
   it('deduplicates tags case-insensitively', async () => {
