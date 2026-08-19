@@ -357,6 +357,84 @@ app.post('/api/lists', async (c) => {
 
 app.get('/api/lists/:slug', (c) => c.json(c.get('list')));
 
+app.post('/api/lists/:slug/copy', async (c) => {
+  const sourceList = c.get('list');
+  const placeCount = await c.env.DB.prepare('SELECT COUNT(*) AS count FROM places WHERE list_id = ?1')
+    .bind(sourceList.id)
+    .first<{ count: number }>();
+  if (Number(placeCount?.count ?? 0) > MAX_PLACES) return jsonError(c, 'Place limit reached', 413);
+
+  const [sourceTags, sourcePlaces, sourceLinks] = await Promise.all([
+    c.env.DB.prepare('SELECT id, name, color FROM tags WHERE list_id = ?1').bind(sourceList.id).all<Pick<Tag, 'id' | 'name' | 'color'>>(),
+    c.env.DB.prepare(
+      'SELECT id, name, address, lat, lng, source, google_place_id, notes, created_at, updated_at FROM places WHERE list_id = ?1 ORDER BY created_at',
+    )
+      .bind(sourceList.id)
+      .all<Pick<Place, 'id' | 'name' | 'address' | 'lat' | 'lng' | 'source' | 'google_place_id' | 'notes' | 'created_at' | 'updated_at'>>(),
+    c.env.DB.prepare(
+      'SELECT pt.place_id, pt.tag_id FROM place_tags pt JOIN places p ON p.id = pt.place_id WHERE p.list_id = ?1',
+    )
+      .bind(sourceList.id)
+      .all<{ place_id: string; tag_id: string }>(),
+  ]);
+
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const copyList = {
+      id: crypto.randomUUID(),
+      name: `${sourceList.name} (copy)`.slice(0, 120),
+      slug: makeSlug(),
+      created_at: now(),
+      last_seen_at: now(),
+    };
+    const tagIds = new Map(sourceTags.results.map((tag) => [tag.id, crypto.randomUUID()]));
+    const placeIds = new Map(sourcePlaces.results.map((place) => [place.id, crypto.randomUUID()]));
+    const statements = [
+      c.env.DB.prepare(
+        'INSERT INTO lists (id, name, slug, created_at, last_seen_at) VALUES (?1, ?2, ?3, ?4, ?5)',
+      ).bind(copyList.id, copyList.name, copyList.slug, copyList.created_at, copyList.last_seen_at),
+      ...sourceTags.results.map((tag) =>
+        c.env.DB.prepare('INSERT INTO tags (id, list_id, name, color) VALUES (?1, ?2, ?3, ?4)').bind(
+          tagIds.get(tag.id),
+          copyList.id,
+          tag.name,
+          tag.color,
+        ),
+      ),
+      ...sourcePlaces.results.map((place) =>
+        c.env.DB.prepare(
+          'INSERT INTO places (id, list_id, name, address, lat, lng, source, google_place_id, notes, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)',
+        ).bind(
+          placeIds.get(place.id),
+          copyList.id,
+          place.name,
+          place.address,
+          place.lat,
+          place.lng,
+          place.source,
+          place.google_place_id,
+          place.notes,
+          place.created_at,
+          place.updated_at,
+        ),
+      ),
+      ...sourceLinks.results.flatMap((link) => {
+        const placeId = placeIds.get(link.place_id);
+        const tagId = tagIds.get(link.tag_id);
+        return placeId && tagId
+          ? [c.env.DB.prepare('INSERT INTO place_tags (place_id, tag_id) VALUES (?1, ?2)').bind(placeId, tagId)]
+          : [];
+      }),
+    ];
+    try {
+      await c.env.DB.batch(statements);
+      return c.json({ ...copyList, url: new URL(`/l/${copyList.slug}`, c.req.url).toString() }, 201);
+    } catch (error) {
+      if (attempt === 2 || !String(error).toLowerCase().includes('unique')) throw error;
+    }
+  }
+  return c.text('Unable to copy list', 500);
+});
+
 app.get('/api/lists/:slug/place-search', async (c) => {
   if (!c.env.GOOGLE_PLACES_API_KEY) return jsonError(c, "Google Places search isn't configured", 503);
   const query = (c.req.query('q') ?? '').trim();
@@ -423,28 +501,6 @@ app.post('/api/lists/:slug/resolve-link', async (c) => {
     }
   }
   return c.json(coordinateCandidate);
-});
-
-app.post('/api/lists/:slug/rotate', async (c) => {
-  const list = c.get('list');
-  for (let attempt = 0; attempt < 3; attempt += 1) {
-    const slug = makeSlug();
-    try {
-      const [result] = await c.env.DB.batch([
-        c.env.DB.prepare('UPDATE lists SET slug = ?1, last_seen_at = ?2 WHERE id = ?3 AND slug = ?4').bind(
-          slug,
-          now(),
-          list.id,
-          list.slug,
-        ),
-      ]);
-      if (!result.meta.changes) return jsonError(c, 'List URL changed; retry with the current URL', 409);
-      return c.json({ slug, url: new URL(`/l/${slug}`, c.req.url).toString() });
-    } catch (error) {
-      if (attempt === 2 || !String(error).toLowerCase().includes('unique')) throw error;
-    }
-  }
-  return c.text('Unable to rotate slug', 500);
 });
 
 app.get('/api/lists/:slug/tags', async (c) => {
