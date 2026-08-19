@@ -1,5 +1,10 @@
 import React, { FormEvent, useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
+import L from 'leaflet';
+import 'leaflet/dist/leaflet.css';
+import markerIcon from 'leaflet/dist/images/marker-icon.png';
+import markerIcon2x from 'leaflet/dist/images/marker-icon-2x.png';
+import markerShadow from 'leaflet/dist/images/marker-shadow.png';
 import './styles.css';
 
 type Tag = { id: string; name: string; color: string | null; usage_count?: number };
@@ -12,6 +17,19 @@ type Place = {
   notes: string | null;
   tags: Tag[];
 };
+
+const DEFAULT_MAP_CENTER: L.LatLngExpression = [20, 0];
+const DEFAULT_MAP_ZOOM = 2;
+
+L.Marker.prototype.options.icon = L.icon({
+  iconUrl: markerIcon,
+  iconRetinaUrl: markerIcon2x,
+  shadowUrl: markerShadow,
+  iconSize: [25, 41],
+  iconAnchor: [12, 41],
+  popupAnchor: [1, -34],
+  shadowSize: [41, 41],
+});
 
 const seenKey = 'cookup-slugs';
 
@@ -126,6 +144,97 @@ function TagInput({ tags, value, setValue }: { tags: Tag[]; value: string[]; set
   );
 }
 
+function hasCoordinates(place: Place): place is Place & { lat: number; lng: number } {
+  return typeof place.lat === 'number' && Number.isFinite(place.lat) && typeof place.lng === 'number' && Number.isFinite(place.lng);
+}
+
+function popupContent(place: Place): HTMLElement {
+  const content = document.createElement('div');
+  content.className = 'map-popup';
+  const heading = document.createElement('strong');
+  heading.textContent = place.name;
+  content.appendChild(heading);
+  for (const line of [place.address, place.tags.map((tag) => tag.name).join(', ')]) {
+    if (!line) continue;
+    const paragraph = document.createElement('p');
+    paragraph.textContent = line;
+    content.appendChild(paragraph);
+  }
+  return content;
+}
+
+function MapView({ places }: { places: Place[] }) {
+  const mapNode = useRef<HTMLDivElement>(null);
+  const mapRef = useRef<L.Map | null>(null);
+  const markersRef = useRef<L.LayerGroup | null>(null);
+  const viewSignatureRef = useRef<string | null>(null);
+  const mappedPlaces = useMemo(() => places.filter(hasCoordinates), [places]);
+
+  useEffect(() => {
+    if (!mapNode.current) return;
+
+    const map = L.map(mapNode.current).setView(DEFAULT_MAP_CENTER, DEFAULT_MAP_ZOOM);
+    const markers = L.layerGroup().addTo(map);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+      maxZoom: 19,
+    }).addTo(map);
+    mapRef.current = map;
+    markersRef.current = markers;
+
+    viewSignatureRef.current = null;
+
+    const frame = window.requestAnimationFrame(() => map.invalidateSize());
+    return () => {
+      window.cancelAnimationFrame(frame);
+      markers.clearLayers();
+      map.remove();
+      mapRef.current = null;
+      markersRef.current = null;
+      viewSignatureRef.current = null;
+    };
+  }, []);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    const markers = markersRef.current;
+    if (!map || !markers) return;
+
+    markers.clearLayers();
+    mappedPlaces.forEach((place) => {
+      L.marker([place.lat, place.lng]).bindPopup(popupContent(place)).addTo(markers);
+    });
+
+    map.invalidateSize();
+
+    const signature = mappedPlaces.map((place) => `${place.id}:${place.lat}:${place.lng}`).join('|');
+    if (signature === viewSignatureRef.current) return;
+    viewSignatureRef.current = signature;
+
+    if (mappedPlaces.length === 0) {
+      map.setView(DEFAULT_MAP_CENTER, DEFAULT_MAP_ZOOM);
+    } else if (mappedPlaces.length === 1) {
+      map.setView([mappedPlaces[0].lat, mappedPlaces[0].lng], 13);
+    } else {
+      map.fitBounds(L.latLngBounds(mappedPlaces.map((place): L.LatLngTuple => [place.lat, place.lng])), {
+        padding: [32, 32],
+        maxZoom: 15,
+      });
+    }
+  }, [mappedPlaces]);
+
+  return (
+    <div className="map-wrap">
+      <div className="map-canvas" ref={mapNode} />
+      {mappedPlaces.length === 0 && (
+        <div className="map-empty-overlay">
+          No matching places have coordinates yet. Add a latitude and longitude to show pins here.
+        </div>
+      )}
+    </div>
+  );
+}
+
 function ListPage({ slug }: { slug: string }) {
   const [places, setPlaces] = useState<Place[]>([]);
   const [tags, setTags] = useState<Tag[]>([]);
@@ -136,6 +245,7 @@ function ListPage({ slug }: { slug: string }) {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editForm, setEditForm] = useState({ name: '', address: '', notes: '', tags: [] as string[] });
   const [error, setError] = useState('');
+  const [view, setView] = useState<'list' | 'map'>('list');
   const [debouncedQuery, setDebouncedQuery] = useState('');
   const refreshRun = useRef(0);
   const refreshSlug = useRef<string | null>(null);
@@ -262,6 +372,14 @@ function ListPage({ slug }: { slug: string }) {
             </button>
           )}
         </div>
+        <div className="view-toggle" role="group" aria-label="Place view">
+          <button type="button" className={view === 'list' ? 'active' : ''} aria-pressed={view === 'list'} onClick={() => setView('list')}>
+            List
+          </button>
+          <button type="button" className={view === 'map' ? 'active' : ''} aria-pressed={view === 'map'} onClick={() => setView('map')}>
+            Map
+          </button>
+        </div>
       </section>
       <div className="columns">
         <form className="card add-card" onSubmit={addPlace}>
@@ -276,39 +394,57 @@ function ListPage({ slug }: { slug: string }) {
           <TagInput tags={tags} value={form.tags} setValue={(next) => setForm({ ...form, tags: next })} />
           <button type="submit">Save place</button>
         </form>
-        <section className="places">
-          {places.length === 0 ? <div className="empty card">No places match yet. Add your first one.</div> : places.map((place) => (
-            <article className="place card" key={place.id}>
-              {editingId === place.id ? (
-                <form className="edit-form" onSubmit={(event) => editPlace(event, place.id)}>
-                  <input required value={editForm.name} onChange={(event) => setEditForm({ ...editForm, name: event.target.value })} placeholder="Place name" />
-                  <input value={editForm.address} onChange={(event) => setEditForm({ ...editForm, address: event.target.value })} placeholder="Address (optional)" />
-                  <textarea value={editForm.notes} onChange={(event) => setEditForm({ ...editForm, notes: event.target.value })} placeholder="Notes (optional)" maxLength={2000} />
-                  <TagInput tags={tags} value={editForm.tags} setValue={(next) => setEditForm({ ...editForm, tags: next })} />
-                  <div className="edit-actions">
-                    <button type="submit">Save changes</button>
-                    <button type="button" className="delete-link" onClick={() => setEditingId(null)}>Cancel</button>
-                  </div>
-                </form>
-              ) : (
-                <>
-                  <div className="place-heading">
-                    <div>
-                      <h2>{place.name}</h2>
-                      {place.address && <p className="muted">{place.address}</p>}
+        {view === 'map' ? (
+          <section className="map-panel card">
+            {places.length === 0 ? (
+              <div className="empty map-empty">No places match the current filters, so there is nothing to map.</div>
+            ) : (
+              <>
+                <p className="map-summary">
+                  Showing {places.filter(hasCoordinates).length} of {places.length} matching {places.length === 1 ? 'place' : 'places'} on the map.
+                  {places.filter((place) => !hasCoordinates(place)).length > 0 && (
+                    <> {places.filter((place) => !hasCoordinates(place)).length} {places.filter((place) => !hasCoordinates(place)).length === 1 ? 'place has' : 'places have'} no coordinates.</>
+                  )}
+                </p>
+                <MapView places={places} />
+              </>
+            )}
+          </section>
+        ) : (
+          <section className="places">
+            {places.length === 0 ? <div className="empty card">No places match yet. Add your first one.</div> : places.map((place) => (
+              <article className="place card" key={place.id}>
+                {editingId === place.id ? (
+                  <form className="edit-form" onSubmit={(event) => editPlace(event, place.id)}>
+                    <input required value={editForm.name} onChange={(event) => setEditForm({ ...editForm, name: event.target.value })} placeholder="Place name" />
+                    <input value={editForm.address} onChange={(event) => setEditForm({ ...editForm, address: event.target.value })} placeholder="Address (optional)" />
+                    <textarea value={editForm.notes} onChange={(event) => setEditForm({ ...editForm, notes: event.target.value })} placeholder="Notes (optional)" maxLength={2000} />
+                    <TagInput tags={tags} value={editForm.tags} setValue={(next) => setEditForm({ ...editForm, tags: next })} />
+                    <div className="edit-actions">
+                      <button type="submit">Save changes</button>
+                      <button type="button" className="delete-link" onClick={() => setEditingId(null)}>Cancel</button>
                     </div>
-                    <div className="place-actions">
-                      <button type="button" className="delete-link" onClick={() => beginEdit(place)}>Edit</button>
-                      <button type="button" className="delete-link" onClick={() => removePlace(place.id)}>Delete</button>
+                  </form>
+                ) : (
+                  <>
+                    <div className="place-heading">
+                      <div>
+                        <h2>{place.name}</h2>
+                        {place.address && <p className="muted">{place.address}</p>}
+                      </div>
+                      <div className="place-actions">
+                        <button type="button" className="delete-link" onClick={() => beginEdit(place)}>Edit</button>
+                        <button type="button" className="delete-link" onClick={() => removePlace(place.id)}>Delete</button>
+                      </div>
                     </div>
-                  </div>
-                  {place.notes && <p>{place.notes}</p>}
-                  <div className="chips">{place.tags.map((tag) => <span className="chip" key={tag.id}>{tag.name}</span>)}</div>
-                </>
-              )}
-            </article>
-          ))}
-        </section>
+                    {place.notes && <p>{place.notes}</p>}
+                    <div className="chips">{place.tags.map((tag) => <span className="chip" key={tag.id}>{tag.name}</span>)}</div>
+                  </>
+                )}
+              </article>
+            ))}
+          </section>
+        )}
       </div>
     </main>
   );
