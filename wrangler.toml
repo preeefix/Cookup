@@ -11,7 +11,7 @@ not_found_handling = "single-page-application"
 [[d1_databases]]
 binding = "DB"
 database_name = "cookup"
-database_id = "REPLACE_WITH_D1_DATABASE_ID"
+database_id = "0fed06da-838b-4b9c-b60e-e7eea0eab7c8"
 migrations_dir = "migrations"
 
 [observability]
