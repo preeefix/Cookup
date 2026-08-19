@@ -14,8 +14,18 @@ type Place = {
   address: string | null;
   lat: number | null;
   lng: number | null;
+  source: 'manual' | 'google' | 'link';
+  google_place_id: string | null;
   notes: string | null;
   tags: Tag[];
+};
+
+type GoogleCandidate = {
+  google_place_id: string | null;
+  name: string;
+  address: string | null;
+  lat: number | null;
+  lng: number | null;
 };
 
 const DEFAULT_MAP_CENTER: L.LatLngExpression = [20, 0];
@@ -241,14 +251,30 @@ function ListPage({ slug }: { slug: string }) {
   const [query, setQuery] = useState('');
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
   const [mode, setMode] = useState<'all' | 'any'>('all');
-  const [form, setForm] = useState({ name: '', address: '', lat: '', lng: '', notes: '', tags: [] as string[] });
+  const [form, setForm] = useState({
+    name: '',
+    address: '',
+    lat: '',
+    lng: '',
+    notes: '',
+    tags: [] as string[],
+    source: 'manual' as 'manual' | 'google' | 'link',
+    google_place_id: '',
+  });
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editForm, setEditForm] = useState({ name: '', address: '', notes: '', tags: [] as string[] });
   const [error, setError] = useState('');
   const [view, setView] = useState<'list' | 'map'>('list');
   const [debouncedQuery, setDebouncedQuery] = useState('');
+  const [googleQuery, setGoogleQuery] = useState('');
+  const [googleCandidates, setGoogleCandidates] = useState<GoogleCandidate[]>([]);
+  const [linkUrl, setLinkUrl] = useState('');
+  const [linkCandidate, setLinkCandidate] = useState<GoogleCandidate | null>(null);
+  const [googleSearching, setGoogleSearching] = useState(false);
+  const [linkResolving, setLinkResolving] = useState(false);
   const refreshRun = useRef(0);
   const refreshSlug = useRef<string | null>(null);
+  const googleSearchRun = useRef(0);
   const filter = useMemo(
     () => `?q=${encodeURIComponent(debouncedQuery)}&tags=${encodeURIComponent(selectedTags.join(','))}&mode=${mode}`,
     [debouncedQuery, mode, selectedTags],
@@ -258,6 +284,33 @@ function ListPage({ slug }: { slug: string }) {
     const timer = window.setTimeout(() => setDebouncedQuery(query), 200);
     return () => window.clearTimeout(timer);
   }, [query]);
+
+  useEffect(() => {
+    const value = googleQuery.trim();
+    const run = ++googleSearchRun.current;
+    if (value.length < 2) {
+      setGoogleCandidates([]);
+      setGoogleSearching(false);
+      return;
+    }
+    const timer = window.setTimeout(async () => {
+      setGoogleSearching(true);
+      try {
+        const candidates = await api<GoogleCandidate[]>(
+          `/api/lists/${slug}/place-search?q=${encodeURIComponent(value)}`,
+        );
+        if (run === googleSearchRun.current) setGoogleCandidates(candidates);
+      } catch (err) {
+        if (run === googleSearchRun.current) {
+          setGoogleCandidates([]);
+          setError(err instanceof Error ? err.message : 'Could not search Google Places');
+        }
+      } finally {
+        if (run === googleSearchRun.current) setGoogleSearching(false);
+      }
+    }, 300);
+    return () => window.clearTimeout(timer);
+  }, [googleQuery, slug]);
 
   async function refresh(includeTags = true) {
     const run = ++refreshRun.current;
@@ -290,11 +343,60 @@ function ListPage({ slug }: { slug: string }) {
       return;
     }
     try {
-      await api(`/api/lists/${slug}/places`, { method: 'POST', body: JSON.stringify({ ...form, lat, lng }) });
-      setForm({ name: '', address: '', lat: '', lng: '', notes: '', tags: [] });
+      await api(`/api/lists/${slug}/places`, {
+        method: 'POST',
+        body: JSON.stringify({ ...form, lat, lng, google_place_id: form.google_place_id || null }),
+      });
+      setForm({
+        name: '',
+        address: '',
+        lat: '',
+        lng: '',
+        notes: '',
+        tags: [],
+        source: 'manual',
+        google_place_id: '',
+      });
+      setGoogleCandidates([]);
+      setLinkCandidate(null);
       await refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not save place');
+    }
+  }
+
+  function useGoogleCandidate(candidate: GoogleCandidate, source: 'google' | 'link') {
+    setForm((current) => ({
+      ...current,
+      name: candidate.name,
+      address: candidate.address ?? '',
+      lat: candidate.lat === null ? '' : String(candidate.lat),
+      lng: candidate.lng === null ? '' : String(candidate.lng),
+      source,
+      google_place_id: candidate.google_place_id ?? '',
+    }));
+    setGoogleCandidates([]);
+    if (source === 'link') setLinkCandidate(null);
+  }
+
+  async function resolveLink() {
+    setError('');
+    if (!linkUrl.trim()) {
+      setError('Paste a Google Maps link first');
+      return;
+    }
+    setLinkResolving(true);
+    try {
+      const candidate = await api<GoogleCandidate>(`/api/lists/${slug}/resolve-link`, {
+        method: 'POST',
+        body: JSON.stringify({ url: linkUrl.trim() }),
+      });
+      setLinkCandidate(candidate);
+    } catch (err) {
+      setLinkCandidate(null);
+      setError(err instanceof Error ? err.message : 'Could not resolve Google Maps link');
+    } finally {
+      setLinkResolving(false);
     }
   }
 
@@ -384,6 +486,57 @@ function ListPage({ slug }: { slug: string }) {
       <div className="columns">
         <form className="card add-card" onSubmit={addPlace}>
           <h2>Add a place</h2>
+          <div className="google-tools">
+            <label htmlFor="google-place-search">Find a place on Google</label>
+            <input
+              id="google-place-search"
+              value={googleQuery}
+              onChange={(event) => {
+                setGoogleQuery(event.target.value);
+                setError('');
+              }}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') event.preventDefault();
+              }}
+              placeholder="Search restaurants or places"
+            />
+            {googleSearching && <p className="muted">Searching Google Places…</p>}
+            {googleCandidates.length > 0 && (
+              <div className="candidate-results">
+                {googleCandidates.map((candidate) => (
+                  <button type="button" className="candidate" key={candidate.google_place_id} onClick={() => useGoogleCandidate(candidate, 'google')}>
+                    <strong>{candidate.name}</strong>
+                    {candidate.address && <span>{candidate.address}</span>}
+                  </button>
+                ))}
+              </div>
+            )}
+            <label htmlFor="google-maps-link">Paste a Google Maps link</label>
+            <div className="link-input">
+              <input
+                id="google-maps-link"
+                value={linkUrl}
+                onChange={(event) => {
+                  setLinkUrl(event.target.value);
+                  setError('');
+                }}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter') event.preventDefault();
+                }}
+                placeholder="https://maps.app.goo.gl/..."
+              />
+              <button type="button" className="secondary-button" onClick={resolveLink} disabled={linkResolving}>
+                {linkResolving ? 'Resolving…' : 'Resolve'}
+              </button>
+            </div>
+            {linkCandidate && (
+              <button type="button" className="candidate selected-candidate" onClick={() => useGoogleCandidate(linkCandidate, 'link')}>
+                <strong>{linkCandidate.name}</strong>
+                {linkCandidate.address && <span>{linkCandidate.address}</span>}
+                <small>Use this place</small>
+              </button>
+            )}
+          </div>
           <input required value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} placeholder="Place name" />
           <input value={form.address} onChange={(event) => setForm({ ...form, address: event.target.value })} placeholder="Address (optional)" />
           <div className="coordinate-row">

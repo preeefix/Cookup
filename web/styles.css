@@ -43,6 +43,18 @@ button[type=submit] { border: 0; border-radius: 10px; padding: 12px 18px; backgr
 .mode-toggle { border: 0; background: #eee7dc; border-radius: 999px; padding: 8px 12px; color: #5d564c; }
 .columns { display: grid; grid-template-columns: 310px 1fr; gap: 22px; align-items: start; }
 .add-card { display: grid; gap: 12px; position: sticky; top: 20px; }
+.google-tools { display: grid; gap: 8px; padding-bottom: 4px; border-bottom: 1px solid #e5ded3; }
+.google-tools label { margin: 4px 0 0; font-size: 13px; }
+.google-tools .muted { margin: 0; }
+.candidate-results { display: grid; gap: 6px; }
+.candidate { display: grid; gap: 3px; width: 100%; padding: 10px 12px; border: 1px solid #d9d0c3; border-radius: 10px; background: #fff; color: inherit; text-align: left; }
+.candidate:hover { border-color: #a45432; background: #fffaf3; }
+.candidate span, .candidate small { color: #81796d; }
+.candidate small { font-size: 12px; }
+.selected-candidate { border-color: #a45432; background: #fffaf3; }
+.link-input { display: flex; gap: 8px; }
+.secondary-button { border: 1px solid #d9d0c3; border-radius: 10px; padding: 10px 12px; background: #eee7dc; color: #5d564c; font-weight: 700; white-space: nowrap; }
+.secondary-button:disabled { cursor: wait; opacity: .65; }
 .places { display: grid; gap: 14px; }
 .map-panel { padding: 16px; }
 .map-summary { color: #81796d; margin: 0 0 12px; font-size: 14px; }

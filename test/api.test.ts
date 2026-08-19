@@ -1,5 +1,11 @@
-import { SELF } from 'cloudflare:test';
-import { describe, expect, it } from 'vitest';
+import { env, fetchMock, SELF } from 'cloudflare:test';
+import app from '../src/index';
+import { beforeAll, describe, expect, it } from 'vitest';
+
+beforeAll(() => {
+  fetchMock.activate();
+  fetchMock.disableNetConnect();
+});
 
 async function createList(name: string) {
   const response = await SELF.fetch('http://example.com/api/lists', {
@@ -19,6 +25,18 @@ async function addPlace(slug: string, place: Record<string, unknown>) {
   });
   expect(response.status).toBe(201);
   return response.json();
+}
+
+function mockGoogleSearch(payload: unknown) {
+  fetchMock
+    .get('https://places.googleapis.com')
+    .intercept({ method: 'POST', path: /.*/ })
+    .reply(200, payload);
+}
+
+async function fetchWithoutGoogleKey(path: string, options?: RequestInit) {
+  const testEnv = { ...env, GOOGLE_PLACES_API_KEY: undefined } as Parameters<typeof app.fetch>[1];
+  return app.fetch(new Request(`http://example.com${path}`, options), testEnv);
 }
 
 describe('phase 1 API', () => {
@@ -163,5 +181,124 @@ describe('phase 1 API', () => {
     expect(renameResponse.status).toBe(200);
     const searchResponse = await SELF.fetch(`http://example.com/api/lists/${list.slug}/places?q=new-name`);
     expect((await searchResponse.json() as Array<{ name: string }>).map((place) => place.name)).toEqual(['Noodles']);
+  });
+});
+
+describe('Google Places API', () => {
+  it('maps a Text Search response to trimmed candidates', async () => {
+    const list = await createList('Google search');
+    mockGoogleSearch({
+      places: [
+        {
+          id: 'places/chopped',
+          displayName: { text: '  Chopped  ' },
+          formattedAddress: '  1 Market Street  ',
+          location: { latitude: 51.5, longitude: -0.12 },
+          rating: 5,
+        },
+      ],
+    });
+
+    const response = await SELF.fetch(`http://example.com/api/lists/${list.slug}/place-search?q=chopped`);
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual([
+      {
+        google_place_id: 'places/chopped',
+        name: 'Chopped',
+        address: '1 Market Street',
+        lat: 51.5,
+        lng: -0.12,
+      },
+    ]);
+    fetchMock.assertNoPendingInterceptors();
+  });
+
+  it('returns a configured error when the Google key is absent', async () => {
+    const list = await createList('Missing Google key');
+    const response = await fetchWithoutGoogleKey(`/api/lists/${list.slug}/place-search?q=ramen`);
+    expect(response.status).toBe(503);
+    expect(await response.json()).toEqual({ error: "Google Places search isn't configured" });
+    const linkResponse = await fetchWithoutGoogleKey(`/api/lists/${list.slug}/resolve-link`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url: 'https://www.google.com/maps?q=1,2' }),
+    });
+    expect(linkResponse.status).toBe(503);
+    expect(await linkResponse.json()).toEqual({ error: "Google Places search isn't configured" });
+  });
+
+  it('rejects non-Google hosts before fetching a shared link', async () => {
+    const list = await createList('Link host');
+    for (const url of ['https://example.com/maps/place/Ramen', 'https://maps.google.com.evil/maps/place/Ramen']) {
+      const response = await SELF.fetch(`http://example.com/api/lists/${list.slug}/resolve-link`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url }),
+      });
+      expect(response.status).toBe(422);
+    }
+  });
+
+  it('extracts coordinates from common Google Maps link shapes', async () => {
+    const list = await createList('Link extraction');
+    const links = [
+      ['https://www.google.com/maps/place/Rome+Cafe/@41.9,12.5,17z', 'Rome Cafe', 41.9, 12.5],
+      ['https://www.google.com/maps/place/New+York/data=!4m2!3d40.7!4d-73.9', 'New York', 40.7, -73.9],
+      ['https://www.google.com/maps?q=1.2,3.4', 'Google Maps location', 1.2, 3.4],
+    ] as const;
+
+    for (const [url, name, lat, lng] of links) {
+      const response = await SELF.fetch(`http://example.com/api/lists/${list.slug}/resolve-link`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url }),
+      });
+      expect(response.status).toBe(200);
+      expect(await response.json()).toMatchObject({ google_place_id: null, name, address: null, lat, lng });
+    }
+  });
+
+  it('uses Text Search to resolve a named Google Maps query', async () => {
+    const list = await createList('Named link');
+    mockGoogleSearch({
+      places: [
+        {
+          id: 'places/coffee',
+          displayName: { text: 'Coffee Shop' },
+          formattedAddress: '5 Main Street',
+          location: { latitude: 10, longitude: 20 },
+        },
+      ],
+    });
+    const response = await SELF.fetch(`http://example.com/api/lists/${list.slug}/resolve-link`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url: 'https://www.google.com/maps?q=Coffee%20Shop' }),
+    });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      google_place_id: 'places/coffee',
+      name: 'Coffee Shop',
+      address: '5 Main Street',
+      lat: 10,
+      lng: 20,
+    });
+    fetchMock.assertNoPendingInterceptors();
+  });
+
+  it('persists Google place source metadata when saving a candidate', async () => {
+    const list = await createList('Google save');
+    const place = (await addPlace(list.slug, {
+      name: 'Google Ramen',
+      address: '1 Noodle Road',
+      lat: 35.6,
+      lng: 139.7,
+      source: 'google',
+      google_place_id: 'places/ramen',
+    })) as { source: string; google_place_id: string; name: string };
+    expect(place).toMatchObject({ source: 'google', google_place_id: 'places/ramen', name: 'Google Ramen' });
+    const listing = await SELF.fetch(`http://example.com/api/lists/${list.slug}/places`);
+    expect(listing.status).toBe(200);
+    expect(await listing.json()).toEqual([place]);
   });
 });
