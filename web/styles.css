@@ -32,7 +32,6 @@ button[type=submit] { border: 0; border-radius: 10px; padding: 12px 18px; backgr
 .list-header h1 { font-size: 48px; }
 .header-link, .delete-link { border: 0; color: #a45432; background: transparent; font-weight: 700; }
 .notice { padding: 13px 16px; border-radius: 10px; background: #fff1db; margin-bottom: 18px; }
-.toolbar { margin-bottom: 18px; }
 .filter-row, .chips { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .filter-row { margin-top: 14px; }
 .chip { border: 1px solid #d9d0c3; border-radius: 999px; padding: 7px 11px; background: #fff; color: #5d564c; }
@@ -40,7 +39,7 @@ button[type=submit] { border: 0; border-radius: 10px; padding: 12px 18px; backgr
 .chip small { opacity: .7; }
 .mode-toggle { border: 0; background: #eee7dc; border-radius: 999px; padding: 8px 12px; color: #5d564c; }
 .workspace { display: grid; grid-template-columns: minmax(340px, 420px) 1fr; gap: 22px; align-items: start; }
-.results-pane { display: grid; gap: 18px; align-content: start; }
+.results-pane { display: grid; gap: 16px; align-content: start; }
 .add-card { display: grid; gap: 12px; }
 .add-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .add-header h2 { margin: 0; }
@@ -58,7 +57,7 @@ button[type=submit] { border: 0; border-radius: 10px; padding: 12px 18px; backgr
 .link-input { display: flex; gap: 8px; }
 .secondary-button { border: 1px solid #d9d0c3; border-radius: 10px; padding: 10px 12px; background: #eee7dc; color: #5d564c; font-weight: 700; white-space: nowrap; }
 .secondary-button:disabled { cursor: wait; opacity: .65; }
-.places { display: grid; gap: 14px; }
+.places { display: grid; gap: 16px; }
 .map-panel { display: flex; flex-direction: column; padding: 16px; position: sticky; top: 20px; height: calc(100vh - 76px); min-height: 460px; }
 .map-summary { color: #81796d; margin: 0 0 12px; font-size: 14px; }
 .map-wrap { position: relative; flex: 1; overflow: hidden; border-radius: 12px; }
